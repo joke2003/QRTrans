@@ -77,12 +77,12 @@ def pack(
         y = banner_h + r * cell_px
         paste_img = img.convert(mode)
         if paste_img.size != (cell_px, cell_px):
-            paste_img = paste_img.resize((cell_px, cell_px))
+            paste_img = paste_img.resize((cell_px, cell_px), Image.Resampling.NEAREST)
         canvas.paste(paste_img, (x, y))
 
     if spec.label:
         draw = ImageDraw.Draw(canvas)
-        draw.rectangle([0, 0, width, BANNER_HEIGHT], fill="black")
+        draw.rectangle([0, 0, width, BANNER_HEIGHT - 1], fill="black")
         text = f"batch={batch} frame {frame_index}/{frame_total}"
         draw.text((10, 10), text, fill="white")
 
