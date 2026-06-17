@@ -51,3 +51,13 @@ def test_reassemble_missing_chunk_incomplete():
 def test_chunk_data_is_base64():
     chunks = split(b"abc", 1300)
     assert base64.b64decode(chunks[0].data_b64) == b"abc"
+
+def test_reassemble_out_of_order():
+    # QR 扫码顺序不确定，reassemble 必须能处理任意顺序
+    content = b"x" * 3000
+    chunks = split(content, 1300)   # 3 块
+    shuffled = [chunks[2], chunks[0], chunks[1]]
+    complete, data, sha = reassemble(shuffled)
+    assert complete
+    assert data == content
+    assert sha == hashlib.sha256(content).hexdigest()
