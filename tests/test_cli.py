@@ -44,12 +44,12 @@ def test_cli_invalid_screen_format_errors(tmp_path):
     src = tmp_path / "n.txt"; src.write_text("x", encoding="utf-8")
     out = tmp_path / "out"
     r = _run(["encode", str(src), "-o", str(out), "--screen", "bad"])
-    assert r.returncode != 0
+    assert r.returncode == 2
 
 def test_cli_nonexistent_input_errors(tmp_path):
     out = tmp_path / "out"
     r = _run(["encode", str(tmp_path / "nope.txt"), "-o", str(out)])
-    assert r.returncode != 0
+    assert r.returncode == 2
 
 def test_cli_decode_partial_returns_nonzero(tmp_path):
     root = tmp_path / "root"

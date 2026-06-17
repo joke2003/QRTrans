@@ -3,7 +3,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from .decoder import decode, DecodeError, DecodeOptions
 from .encoder import encode, EncodeOptions
@@ -71,10 +71,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         try:
             res = encode(args.input, args.outdir, opts)
-        except FsError as e:
-            print(f"error: {e}", file=sys.stderr)
-            return _EXIT_FAIL
-        except Exception as e:
+        except (FsError, ValueError) as e:
             print(f"error: {e}", file=sys.stderr)
             return _EXIT_FAIL
         print(f"encoded batch={res.batch} payloads={res.payload_count} "
