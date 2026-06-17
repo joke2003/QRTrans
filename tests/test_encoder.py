@@ -1,5 +1,7 @@
 from pathlib import Path
 import secrets
+import pytest
+from qrtrans import fs_walk
 from qrtrans.encoder import encode, EncodeOptions, EncodeResult
 from qrtrans.qr_scan import scan
 from qrtrans.protocol import Payload
@@ -70,6 +72,5 @@ def test_encode_empty_input_dir_errors(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     out = tmp_path / "out"
-    import pytest
-    with pytest.raises(Exception):
+    with pytest.raises(fs_walk.FsError):
         encode(empty, out, _opts())

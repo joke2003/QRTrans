@@ -7,7 +7,7 @@ from PIL import Image
 
 from . import chunker, fs_walk, protocol, qr_render
 from .array_pack import (
-    auto_grid, parse_grid, paginate, pack, FrameSpec, BANNER_HEIGHT,
+    auto_grid, parse_grid, paginate, pack, FrameSpec,
 )
 from .fs_walk import FileRecord, DirRecord
 
@@ -35,7 +35,9 @@ def _new_batch_id() -> str:
     return secrets.token_hex(4)   # 8 位十六进制
 
 
-def _build_payloads(files, dirs, batch, chunk_raw_bytes) -> List[protocol.Payload]:
+def _build_payloads(
+    files: List[FileRecord], dirs: List[DirRecord], batch: str, chunk_raw_bytes: int
+) -> List[protocol.Payload]:
     payloads: List[protocol.Payload] = []
     for idx, f in enumerate(files):
         fid = f"f{idx:02d}"
@@ -81,7 +83,7 @@ def encode(input_path: Path, out_dir: Path, options: EncodeOptions) -> EncodeRes
             img = qr_render.render(pl, module_px=options.module_px, ec=options.ec)
             fname = f"qrtrans_{batch}_{i:04d}.png"
             p = out_dir / fname
-            img.convert("RGB").save(p, "PNG")
+            img.save(p, "PNG")
             outputs.append(p)
     else:
         spec = _resolve_framespec(options)
