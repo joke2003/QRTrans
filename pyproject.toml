@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qrtrans"
+version = "0.1.0"
+description = "Encode text files/directories into QR codes (with array packing) and decode them back."
+requires-python = ">=3.9"
+dependencies = [
+    "qrcode>=7.4",
+    "Pillow>=10.0",
+    "pyzbar>=0.1.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+qrtrans = "qrtrans.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["qrtrans*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
