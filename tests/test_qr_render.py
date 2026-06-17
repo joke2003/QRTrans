@@ -25,6 +25,13 @@ def test_render_invalid_ec_raises():
 
 def test_render_data_overflow_raises():
     import pytest
-    huge = "A" * 3000  # base64 of ~2250 bytes -> JSON > V40 EC-M capacity
-    with pytest.raises(Exception):
+    huge = "A" * 3000  # 超过 V40/M byte 容量 2331（即便 qrcode 选 alnum 也无关，
+                       # 我们按 byte 容量拒绝）
+    with pytest.raises(ValueError, match="capacity"):
         render(_payload(data_b64=huge), module_px=3, ec="M")
+
+def test_render_near_capacity_succeeds():
+    # JSON 字节数接近但不超过 V40/M byte 容量，应成功渲染
+    p = _payload(data_b64="A" * 1700)   # JSON ~1908B < 2331
+    img = render(p, module_px=3, ec="M")
+    assert img.size == (CELL_MODULES * 3, CELL_MODULES * 3)

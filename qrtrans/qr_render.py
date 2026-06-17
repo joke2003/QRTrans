@@ -19,7 +19,12 @@ EC_LEVELS = {
 QR_VERSION = 40
 
 # Version 40 字节模式（byte mode）数据容量上限（字节）。来源：QR Code 官方容量表。
-# 注意：qrcode 的 make(fit=False) 不会在超容时抛错，故这里显式校验。
+# 显式校验的真实动机（实测 qrcode 行为）：
+#   1) qrcode 在真正超容时确实会抛错，但抛的是 DataOverflowError（Exception 的直接
+#      子类，非 ValueError），对调用方而言异常类型契约不稳定；
+#   2) qrcode 会自动选择编码模式：纯字母数字数据走 alphanumeric（容量更大，实测
+#      3000 个 'A' 不报错），因此即便数据已超过 byte 容量 2331，仍可能不抛错。
+# 这里按 byte 容量提前校验，为调用方提供稳定的 ValueError 契约 + 安全余量 + 清晰错误信息。
 V40_BYTE_CAPACITY = {
     "L": 2953,
     "M": 2331,
