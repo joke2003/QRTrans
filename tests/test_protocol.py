@@ -60,3 +60,36 @@ def test_make_dir_payload_marks_empty_dir():
     assert p.tc == 1 and p.ci == 0
     assert p.data == "" and p.sha256 == ""
     assert p.path == "empty/"
+
+def test_validate_rejects_file_with_empty_sha256():
+    with pytest.raises(ProtocolError):
+        validate(_file_payload(sha256=""))
+
+def test_validate_rejects_file_path_ending_with_slash():
+    with pytest.raises(ProtocolError):
+        validate(_file_payload(path="adir/"))
+
+def test_validate_accepts_file_with_empty_data_for_empty_file():
+    # 空文件的唯一分块 data 为 ""，必须被接受
+    validate(_file_payload(data=""))
+
+def test_validate_rejects_dir_with_nonempty_data():
+    d = Payload(magic=MAGIC, ver=PROTOCOL_VERSION, batch="abc12345",
+                type="dir", fid="d00", fn="", path="empty/",
+                ci=0, tc=1, enc="b64", sha256="", data="AAAA")
+    with pytest.raises(ProtocolError):
+        validate(d)
+
+def test_validate_rejects_bad_ci_tc_boundary():
+    with pytest.raises(ProtocolError):
+        validate(_file_payload(ci=1, tc=1))   # ci == tc
+    with pytest.raises(ProtocolError):
+        validate(_file_payload(tc=0))         # tc < 1
+    with pytest.raises(ProtocolError):
+        validate(_file_payload(ci=-1, tc=2))  # ci < 0
+
+def test_from_json_raises_protocol_error_on_bad_input():
+    with pytest.raises(ProtocolError):
+        Payload.from_json("{not json")
+    with pytest.raises(ProtocolError):
+        Payload.from_json('{"magic":"QRT"}')  # 缺字段 -> TypeError 被包裹

@@ -32,8 +32,11 @@ class Payload:
 
     @classmethod
     def from_json(cls, s: str) -> "Payload":
-        d = json.loads(s)
-        return cls(**d)
+        try:
+            d = json.loads(s)
+            return cls(**d)
+        except (ValueError, TypeError) as e:
+            raise ProtocolError(f"bad payload json: {e}") from e
 
 
 def is_safe_relpath(path: str) -> bool:
@@ -68,6 +71,10 @@ def validate(payload: Payload) -> None:
     else:
         if payload.tc < 1 or not (0 <= payload.ci < payload.tc):
             raise ProtocolError(f"bad ci/tc: {payload.ci}/{payload.tc}")
+        if payload.sha256 == "":
+            raise ProtocolError("file payload must have non-empty sha256")
+        if payload.path.endswith("/"):
+            raise ProtocolError("file path must not end with '/'")
 
 
 def make_file_payload(*, batch, fid, relpath, fn, ci, tc, sha256, data_b64) -> Payload:
