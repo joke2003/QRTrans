@@ -46,6 +46,7 @@ def _filter_and_group(payloads):
     dirs = []
     warnings = []
     seen_batch = {}
+    batches = set()
     for pl in payloads:
         try:
             validate(pl)
@@ -56,26 +57,33 @@ def _filter_and_group(payloads):
             warnings.append(f"fid {pl.fid} 出现多个 batch，跳过后续")
             continue
         seen_batch[pl.fid] = pl.batch
+        batches.add(pl.batch)
         if pl.type == "dir":
             dirs.append(pl)
         else:
             file_groups[pl.fid].append(pl)
+    if len(batches) > 1:
+        warnings.append(f"multiple batches detected in input: {sorted(batches)}")
     return file_groups, dirs, warnings
 
 
-def _reassemble_file(fPayloads) -> "_FileReas":
-    """返回 (relpath, fn, bytes|None, sha256, ok, reason)。"""
-    relpath = fPayloads[0].path
-    fn = fPayloads[0].fn
-    chunks = [Chunk(p.ci, p.tc, p.sha256, p.data) for p in fPayloads]
+def _reassemble_file(file_payloads: List[Payload]) -> "_FileReas":
+    """重组单个文件的所有分块。返回 _FileReas（ok/reason/data/sha256）。
+
+    良性重复（同 ci 同 data，如目录含重复图像）按 ci 去重保留首个；
+    真 conflict（同 ci 异 data）由下方 sha256 校验兜底。
+    """
+    relpath = file_payloads[0].path
+    fn = file_payloads[0].fn
+    by_ci = {}
+    for p in file_payloads:
+        if p.ci not in by_ci:
+            by_ci[p.ci] = p
+    chunks = [Chunk(p.ci, p.tc, p.sha256, p.data) for p in by_ci.values()]
     tc = chunks[0].tc
-    present = sorted(c.ci for c in chunks)
-    if len(set(present)) != len(chunks):
-        return _FileReas(relpath, fn, None, chunks[0].sha256, False,
-                         f"duplicate chunk indices for {relpath}")
     complete, data, sha = chunker.reassemble(chunks)
     if not complete:
-        missing = sorted(set(range(tc)) - set(present))
+        missing = sorted(set(range(tc)) - set(by_ci.keys()))
         return _FileReas(relpath, fn, None, sha, False,
                          f"missing chunks {missing} for {relpath}")
     actual = hashlib.sha256(data).hexdigest()
@@ -136,7 +144,8 @@ def decode(input_path: Path, output: Path, options: DecodeOptions) -> DecodeResu
     # 目录模式
     files = [FileRecord(r.relpath, r.data) for r in reassembled if r.ok]
     dirs = [DirRecord(p.path) for p in dir_payloads]
-    fs_walk.rebuild(files, dirs, output)
-    result.files_written = [f.relpath for f in files]
-    result.dirs_created = [d.relpath for d in dirs]
+    if files or dirs:
+        fs_walk.rebuild(files, dirs, output)
+        result.files_written = [f.relpath for f in files]
+        result.dirs_created = [d.relpath for d in dirs]
     return result
