@@ -3,7 +3,7 @@ import json
 from typing import List
 from pyzbar.pyzbar import decode as pyzbar_decode
 from PIL import Image
-from .protocol import Payload, MAGIC, ProtocolError
+from .protocol import Payload, MAGIC
 
 
 def scan(image: Image.Image) -> List[Payload]:

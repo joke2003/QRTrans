@@ -20,13 +20,28 @@ def test_scan_image_without_qr_returns_empty():
     assert scan(blank) == []
 
 def test_scan_skips_non_qrt_qr(tmp_path):
-    # 生成一个非 QRT 的普通 QR
+    # 合法 JSON 但 magic != "QRT" 的 QR，应被 magic 过滤分支跳过
+    import json
     import qrcode
+    other_payload = json.dumps({
+        "magic": "XXX", "ver": 1, "data": "not-qrt-payload",
+    })
     qr = qrcode.QRCode(version=1, box_size=4, border=4)
-    qr.add_data("https://example.com/not-qrt")
+    qr.add_data(other_payload)
     qr.make(fit=True)
     other = qr.make_image().get_image()
     assert scan(other) == []
+
+def test_scan_skips_payload_missing_fields():
+    # 合法 JSON 且 magic == "QRT"，但缺必填字段 -> Payload(**d) 抛 TypeError 被跳过
+    import json
+    import qrcode
+    bad_payload = json.dumps({"magic": "QRT", "ver": 1})  # 缺大量字段
+    qr = qrcode.QRCode(version=1, box_size=4, border=4)
+    qr.add_data(bad_payload)
+    qr.make(fit=True)
+    img = qr.make_image().get_image()
+    assert scan(img) == []
 
 def test_scan_multiple_qrs_in_one_image():
     # 阵列场景：一张图里多个 QR 都应被检出
