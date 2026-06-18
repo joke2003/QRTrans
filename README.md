@@ -19,7 +19,7 @@ qrtrans encode notes.txt -o qr_out/
 # 编码整个目录（保留层级 + 空目录）
 qrtrans encode ./mydir -o qr_out/
 
-# 激进模式：每帧 10 个 QR（5x2，2px 模块）
+# 激进模式：每帧 10 个 QR（--grid WxH 列x行，5x2=5列2行；--module-px 2）
 qrtrans encode big.txt -o qr_out/ --module-px 2 --grid 5x2 --no-label
 
 # 自动布局
@@ -28,9 +28,9 @@ qrtrans encode big.txt -o qr_out/ --grid auto
 # 单 QR 模式（每 QR 一张 PNG，适合打印）
 qrtrans encode notes.txt -o qr_out/ --mode single
 
-# 解码（单张或多文件目录）
-qrtrans decode qr_out/ -o decoded.txt      # 单文件
-qrtrans decode qr_out/ -o decoded_dir/     # 目录
+# 解码：输出形态由内容自动判定（单文件内容→写为单文件；目录内容→重建目录）
+qrtrans decode qr_out/ -o decoded.txt      # 若编码内容是单个文件，写出 decoded.txt
+qrtrans decode qr_out/ -o decoded_dir      # 若编码内容是目录，重建到 decoded_dir/
 ```
 
 ## 退出码

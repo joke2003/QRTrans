@@ -1,9 +1,6 @@
-import hashlib
-from pathlib import Path
 from PIL import Image
 from qrtrans.encoder import encode, EncodeOptions
 from qrtrans.decoder import decode, DecodeOptions
-from qrtrans.qr_scan import scan
 
 
 def _opts(**over):
