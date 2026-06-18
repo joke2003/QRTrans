@@ -87,3 +87,46 @@ def test_cli_decode_progress_to_stderr(tmp_path):
     assert ("扫描" in r.stderr) or ("还原" in r.stderr)
     assert "\r" not in r.stderr
     assert dec.read_text(encoding="utf-8") == "hello progress"
+
+
+def test_cli_default_mode_is_colormatrix(tmp_path):
+    src = tmp_path / "n.txt"; src.write_text("default mode")
+    out = tmp_path / "o"; dec = tmp_path / "d.txt"
+    r = _run(["encode", str(src), "-o", str(out), "--batch", "cdef0001"])
+    assert r.returncode == 0, r.stderr
+    assert list(out.glob("qrtrans_cdef0001_cm_*.png"))   # colormatrix 命名
+
+
+def test_cli_colormatrix_roundtrip(tmp_path):
+    src = tmp_path / "n.txt"; src.write_text("cli cm 你好")
+    out = tmp_path / "o"; dec = tmp_path / "d.txt"
+    assert _run(["encode", str(src), "-o", str(out), "--batch", "clicm001"]).returncode == 0
+    assert _run(["decode", str(out), "-o", str(dec)]).returncode == 0
+    assert dec.read_text(encoding="utf-8") == "cli cm 你好"
+
+
+def test_cli_colormatrix_custom_colors_cellpx(tmp_path):
+    src = tmp_path / "n.txt"; src.write_text("x" * 500)
+    out = tmp_path / "o"
+    r = _run(["encode", str(src), "-o", str(out), "--colors", "32", "--cell-px", "5",
+              "--batch", "cmcust01"])
+    assert r.returncode == 0, r.stderr
+
+
+def test_cli_qr_mode_still_works(tmp_path):
+    src = tmp_path / "n.txt"; src.write_text("qr still ok")
+    out = tmp_path / "o"; dec = tmp_path / "d.txt"
+    r = _run(["encode", str(src), "-o", str(out), "--mode", "array", "--batch", "qrok0001"])
+    assert r.returncode == 0
+    assert list(out.glob("qrtrans_qrok0001_frame_*.png"))   # QR array 命名
+
+
+def test_cli_qr_default_grid_is_4x2(tmp_path):
+    # 不传 --grid，QR array 默认 4x2
+    src = tmp_path / "big.txt"; src.write_text("K" * 14000)
+    out = tmp_path / "o"
+    _run(["encode", str(src), "-o", str(out), "--mode", "array", "--batch", "grid42001"])
+    from PIL import Image
+    from qrtrans.qr_scan import scan
+    frames = list(out.glob("qrtrans_grid42001_frame_*.png"))
+    assert max(len(scan(Image.open(f))) for f in frames) == 8   # 4x2=8
