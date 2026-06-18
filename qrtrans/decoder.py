@@ -9,6 +9,7 @@ from PIL import Image
 from . import chunker, fs_walk, qr_scan
 from .chunker import Chunk
 from .fs_walk import FileRecord, DirRecord
+from .progress import ProgressCallback, ProgressEvent
 from .protocol import Payload, ProtocolError, validate
 
 
@@ -29,13 +30,16 @@ class DecodeResult:
     failed: List[str] = field(default_factory=list)
 
 
-def _gather_payloads(input_path: Path) -> List[Payload]:
+def _gather_payloads(input_path: Path, progress: Optional[ProgressCallback] = None) -> List[Payload]:
     images = fs_walk.gather_images(input_path)
+    total = len(images)
     payloads: List[Payload] = []
-    for img_path in images:
+    for i, img_path in enumerate(images, start=1):
         with Image.open(img_path) as img:
             img.load()
             payloads.extend(qr_scan.scan(img))
+        if progress is not None:
+            progress(ProgressEvent("scan", i, total))
     return payloads
 
 
@@ -103,9 +107,14 @@ class _FileReas:
     reason: str
 
 
-def decode(input_path: Path, output: Path, options: DecodeOptions) -> DecodeResult:
+def decode(
+    input_path: Path,
+    output: Path,
+    options: DecodeOptions,
+    progress: Optional[ProgressCallback] = None,
+) -> DecodeResult:
     result = DecodeResult()
-    payloads = _gather_payloads(input_path)
+    payloads = _gather_payloads(input_path, progress=progress)
     if not payloads:
         raise DecodeError(f"no QRT payloads found in {input_path}")
 
@@ -113,8 +122,11 @@ def decode(input_path: Path, output: Path, options: DecodeOptions) -> DecodeResu
     result.warnings.extend(warnings)
 
     reassembled: List[_FileReas] = []
-    for fid, group in file_groups.items():
+    total_files = len(file_groups)
+    for i, (fid, group) in enumerate(file_groups.items(), start=1):
         reassembled.append(_reassemble_file(group))
+        if progress is not None:
+            progress(ProgressEvent("reassemble", i, total_files))
 
     # 决定输出形态：无目录标记、且仅 1 个 ok 文件组 -> 写单文件
     n_ok_files = sum(1 for r in reassembled if r.ok)

@@ -69,3 +69,31 @@ def test_encode_without_progress_still_works(tmp_path):
     res = encode(src, tmp_path / "out", _opts(batch="noprog01"))  # progress 默认 None
     assert res.payload_count >= 1
     assert list((tmp_path / "out").glob("*.png"))
+
+
+from qrtrans.decoder import decode, DecodeOptions
+
+
+def test_decode_emits_scan_and_reassemble(tmp_path):
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "b.txt").write_text("B" * 10)
+    (root / "top.txt").write_text("T")
+    out = tmp_path / "out"
+    encode(root, out, _opts(mode="array", batch="dec000001"))
+    cb, events = _capture()
+    res = decode(out, tmp_path / "dec", DecodeOptions(), progress=cb)
+    scans = [e for e in events if e.phase == "scan"]
+    reass = [e for e in events if e.phase == "reassemble"]
+    assert scans and scans[-1].current == scans[-1].total
+    assert reass and reass[-1].current == reass[-1].total
+    assert (tmp_path / "dec" / "top.txt").read_text(encoding="utf-8") == "T"
+
+
+def test_decode_without_progress_still_works(tmp_path):
+    src = tmp_path / "a.txt"
+    src.write_text("hi")
+    out = tmp_path / "out"
+    encode(src, out, _opts(mode="single", batch="dnp00001"))
+    decode(out, tmp_path / "dec.txt", DecodeOptions())  # progress 默认 None
+    assert (tmp_path / "dec.txt").read_text(encoding="utf-8") == "hi"
