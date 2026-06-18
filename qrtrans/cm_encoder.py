@@ -1,5 +1,6 @@
 from __future__ import annotations
 import hashlib
+import math
 import secrets
 import struct
 import zlib
@@ -13,6 +14,28 @@ from .palette import build_palette, COLOR_BITS
 from . import cm_protocol, rs
 from .finder import draw_markers, MARKER_CELL
 from .progress import ProgressCallback, ProgressEvent
+
+# 头序列化后的固定字节数：struct body 54 + batch 4 + crc 4 = 62
+_HEADER_BYTES = 54 + 4 + 4
+
+
+def _header_cells(bpc: int) -> int:
+    """头占用的单元格数 = ceil(62*8 / bpc)。"""
+    return math.ceil(_HEADER_BYTES * 8 / bpc)
+
+
+def _payload_bytes_per_frame(payload_cells: int, bpc: int, nsym: int) -> int:
+    """每帧 RS 编码前的原始数据字节数。
+
+    _render_frame 渲染的是 RS 编码后的码字（每块 255B），因此可用单元换算成
+    码字字节后再倒推 RS 块数与原始数据字节，确保码字 bit-pack 后不溢出
+    payload_cells，从而 head_idx + pay_idx <= 内部网格单元数，杜绝静默截断。
+    """
+    max_codeword_bytes = (payload_cells * bpc) // 8
+    num_blocks = max_codeword_bytes // rs.BLOCK
+    if num_blocks < 1:
+        raise ValueError(f"screen/cell_px too small for RS codeword region")
+    return num_blocks * (rs.BLOCK - nsym)
 
 
 @dataclass(frozen=True)
@@ -85,15 +108,16 @@ def colormatrix_encode(input_path: Path, out_dir: Path,
     gw, gh = _grid_dims(options.screen, cell_px)
     iw = gw - 2 * MARKER_CELL
     ih = gh - 2 * MARKER_CELL
-    header_cells = 64
+    header_cells = _header_cells(bpc)
     payload_cells_per_frame = iw * ih - header_cells
     if payload_cells_per_frame < 1:
         raise ValueError(f"screen/cell_px too small for payload region")
-    payload_bytes_per_frame = (payload_cells_per_frame * bpc) // 8
+    payload_bytes_per_frame = _payload_bytes_per_frame(
+        payload_cells_per_frame, bpc, _nsym(options.ecc_percent))
 
+    out_dir.mkdir(parents=True, exist_ok=True)
     frames_data = _chunk_with_rs(payload, payload_bytes_per_frame, _nsym(options.ecc_percent))
     frame_total = len(frames_data)
-    out_dir.mkdir(parents=True, exist_ok=True)
     outputs: List[Path] = []
 
     if progress is not None:
