@@ -94,7 +94,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"file: {f}")
         for d in res.dirs_created:
             print(f"dir:  {d}")
-        return _EXIT_PARTIAL if (res.warnings or res.failed) else _EXIT_OK
+        return _EXIT_PARTIAL if res.failed else _EXIT_OK
 
     parser.error("unknown command")
     return _EXIT_FAIL

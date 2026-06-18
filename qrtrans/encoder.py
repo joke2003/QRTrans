@@ -2,7 +2,7 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 from PIL import Image
 
 from . import chunker, fs_walk, protocol, qr_render
@@ -89,7 +89,7 @@ def encode(input_path: Path, out_dir: Path, options: EncodeOptions) -> EncodeRes
         spec = _resolve_framespec(options)
         images = [qr_render.render(pl, module_px=options.module_px, ec=options.ec)
                   for pl in payloads]
-        frames = paginate(images, spec.per_frame) if images else []
+        frames = paginate(images, spec.per_frame)
         total = len(frames)
         for idx, frame_imgs in enumerate(frames, start=1):
             canvas = pack(frame_imgs, spec, batch=batch,

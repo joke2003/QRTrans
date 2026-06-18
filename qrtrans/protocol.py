@@ -1,7 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 import json
-import posixpath
 
 MAGIC = "QRT"
 PROTOCOL_VERSION = 1
@@ -40,16 +39,13 @@ class Payload:
 
 
 def is_safe_relpath(path: str) -> bool:
+    """相对路径安全：非空、非绝对、不含 `..` 上跳或 `.` 当前目录段。"""
     if not path or path.startswith("/"):
         return False
-    norm = posixpath.normpath(path)
-    if norm == ".." or norm.startswith("../") or norm == ".":
-        if norm == ".":
-            return True
-        return False
-    if "/.." in norm or norm == "..":
-        return False
-    return True
+    if path.endswith("/"):
+        path = path[:-1]
+    parts = path.split("/")
+    return all(p not in ("", ".", "..") for p in parts)
 
 
 def validate(payload: Payload) -> None:

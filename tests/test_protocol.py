@@ -93,3 +93,10 @@ def test_from_json_raises_protocol_error_on_bad_input():
         Payload.from_json("{not json")
     with pytest.raises(ProtocolError):
         Payload.from_json('{"magic":"QRT"}')  # 缺字段 -> TypeError 被包裹
+
+
+def test_is_safe_relpath_rejects_dot_and_empty_parts():
+    assert not is_safe_relpath(".")
+    assert not is_safe_relpath("a/.")
+    assert not is_safe_relpath("a//b")
+    assert not is_safe_relpath("")
