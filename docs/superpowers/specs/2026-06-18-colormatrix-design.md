@@ -59,10 +59,10 @@
 
 一帧由三部分组成（均为单元格，统一渲染）：
 
-1. **finder 标记（四角）**：每个角放一个固定图形——一个"标记色"实心方块（标记色为调色板之外的保留色，如纯黑）外加白色环，边长约 `2×cell_px`。解码端据此**定位 + 仿射修正**（处理 viewer 的轻微缩放/裁剪/倾斜）。
+1. **finder 标记（四角）**：每个角放一个**保留的离网格色**实心方块（实现取 `(32,223,96)`，不在调色板网格 `{0,64,128,191,255}³` 上，避免与内部黑色单元格混淆）。解码端据此**定位 + 轴对齐 bbox 修正**（处理 viewer 的轻微**缩放/裁剪**；截屏信道无旋转/倾斜，故不做仿射）。
 2. **帧头区（顶部保留若干单元格行）**：用单元格编码的二进制元信息，字段：
-   - `magic`(4B，如 `CMTX`)、`version`(1B)、`palette_version`(1B)、`K`(1B)、`cell_px`(1B)、`grid W×H`(各 2B)、`batch`(8 位 hex)、`frame_index`(2B)、`frame_total`(2B)、`cm_ecc_percent`(1B)、`compressed`(1B)、`payload_total_bytes`(4B)、`payload_sha256`(32B)、`header_crc32`(4B)
-   - 帧头**单独 RS 保护**（或重复 3 份多数表决），因帧头损坏则整帧不可解析。编码方式：字节→拆成 4-bit 半字节→映射到 K≥16 的色索引（每半字节 1 单元格）；对 K<16 用 2 单元格/字节。
+   - `magic`(4B，`CMTX`)、`version`(1B)、`palette_version`(1B)、`K`(1B)、`cell_px`(1B)、`grid W×H`(各 2B)、`batch`(8 位 hex)、`frame_index`(2B)、`frame_total`(2B)、`cm_ecc_percent`(1B)、`compressed`(1B)、`payload_total_bytes`(4B)、`payload_sha256`(32B)、`header_crc32`(4B)
+   - 帧头用 **CRC32 检测**（v1；无损信道下头误判≈0%，损坏即整帧丢弃→降级为缺帧）。未来丢帧率高时可升级为 3 份多数表决。编码方式：字节序列经 `bytes_to_indices` 按当前 K 的 bits/cell 打包成单元格索引。
 3. **载荷区（其余单元格）**：每单元格一个调色板索引 = 数据流的可视化。
 
 > 精确字节布局、单元格行数在实现计划里定；本规格只约束字段集合与上述策略。
@@ -107,18 +107,15 @@ input(file|dir)
 
 ```
 input(file|dir of PNG)
-  └─ 对每张图：检测 finder 标记
-       ├─ 命中 finder → colormatrix 帧
-       │    └─ 定位 4 标记 → 仿射变换归一 → 采样单元中心 → nearest 调色板 → 索引
-       │        └─ 拼出帧头 + 载荷 → 按 frame_index 收集
-       └─ 未命中 → 该图走 QR 路径（pyzbar）
-  └─ 按 magic 分流：colormatrix 帧聚合 / QR 载荷聚合
-       ├─ colormatrix：每帧 RS 纠错 → 按 frame_index 拼装 → 帧齐全则解压 → 校验 sha256 → 还原 Records → rebuild
-       └─ QR：沿用既有 decoder
+  └─ 判型：全量图均命中 finder → colormatrix；均未命中 → QR；混合 → 报错（拒绝）
+       ├─ colormatrix：逐帧 定位 4 标记→轴对齐 interior bbox→探测 cell_px(候选)→采单元中心→nearest 调色板→索引
+       │    └─ 帧头校验(magic+CRC) + 载荷按 codeword_len 精确截断 → 每帧 RS 纠错 → 按 frame_index 拼装
+       │        └─ 帧齐全→解压→校验 sha256→还原 Records→rebuild
+       └─ QR：沿用既有 decoder（pyzbar）
 ```
 
-- 解码端**自动检测**帧类型，故输入目录可混合（虽然单批应一致）。
-- 几何修正：4 个 finder 角点求仿射矩阵，把捕获图映射回标准网格；对每单元格中心采样（中心点远离边缘抗锯齐）。
+- 解码端**自动检测**帧类型（全量一致），**混合类型目录报错**（避免静默走错路径）；单批应保持一致编码类型。
+- 几何修正：4 个 finder 角点求轴对齐 interior bbox（抗轻微缩放/裁剪；截屏信道无旋转，故不求仿射）；对每单元格中心采样（中心点远离边缘抗锯齿）。cell_px 由"候选值探测 + 头 magic 自洽"打破鸡生蛋。
 
 ---
 
