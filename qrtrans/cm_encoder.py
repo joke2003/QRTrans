@@ -1,0 +1,186 @@
+from __future__ import annotations
+import hashlib
+import secrets
+import struct
+import zlib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Optional, Tuple
+from PIL import Image, ImageDraw
+
+from . import fs_walk
+from .palette import build_palette, COLOR_BITS
+from . import cm_protocol, rs
+from .finder import draw_markers, MARKER_CELL
+from .progress import ProgressCallback, ProgressEvent
+
+
+@dataclass(frozen=True)
+class CmEncodeOptions:
+    colors: int = 16
+    cell_px: int = 4
+    ecc_percent: int = 12
+    compress: bool = True
+    screen: Tuple[int, int] = (1920, 1080)
+    batch: str = ""
+    label: bool = True
+
+
+@dataclass
+class CmEncodeResult:
+    batch: str
+    frame_count: int
+    output_files: List[Path]
+
+
+def _new_batch() -> str:
+    return secrets.token_hex(4)
+
+
+def _normalize_batch(batch: str) -> str:
+    """CmHeader 要求 batch 为 8 位十六进制；非 hex 输入则确定性派生一个。"""
+    if batch:
+        try:
+            b = bytes.fromhex(batch)
+            if len(b) == 4:
+                return batch.lower()
+        except ValueError:
+            pass
+        return hashlib.sha256(batch.encode("utf-8")).hexdigest()[:8]
+    return _new_batch()
+
+
+def _nsym(percent: int) -> int:
+    return max(2, min(254, round(255 * percent / 100)))
+
+
+def _grid_dims(screen, cell_px):
+    sw, sh = screen
+    return sw // cell_px, sh // cell_px
+
+
+def colormatrix_encode(input_path: Path, out_dir: Path,
+                       options: CmEncodeOptions,
+                       progress: Optional[ProgressCallback] = None) -> CmEncodeResult:
+    files, dirs = fs_walk.collect(input_path)
+    if not files and not dirs:
+        raise fs_walk.FsError(f"nothing to encode under {input_path}")
+
+    batch = _normalize_batch(options.batch)
+    palette = build_palette(options.colors)
+    bpc = COLOR_BITS[options.colors]
+    cell_px = options.cell_px
+
+    payload = _build_payload(files, dirs)
+    sha = hashlib.sha256(payload).hexdigest()
+    if options.compress:
+        comp = zlib.compress(payload, 9)
+        if len(comp) < len(payload):
+            payload, compressed = comp, 1
+        else:
+            compressed = 0
+    else:
+        compressed = 0
+
+    gw, gh = _grid_dims(options.screen, cell_px)
+    iw = gw - 2 * MARKER_CELL
+    ih = gh - 2 * MARKER_CELL
+    header_cells = 64
+    payload_cells_per_frame = iw * ih - header_cells
+    if payload_cells_per_frame < 1:
+        raise ValueError(f"screen/cell_px too small for payload region")
+    payload_bytes_per_frame = (payload_cells_per_frame * bpc) // 8
+
+    frames_data = _chunk_with_rs(payload, payload_bytes_per_frame, _nsym(options.ecc_percent))
+    frame_total = len(frames_data)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    outputs: List[Path] = []
+
+    if progress is not None:
+        progress(ProgressEvent("prepare", frame_total, frame_total))
+
+    for idx, (frame_payload, frame_orig_len) in enumerate(frames_data, start=1):
+        header = cm_protocol.CmHeader(
+            magic=cm_protocol.CM_MAGIC, version=cm_protocol.CM_VERSION,
+            palette_version=cm_protocol.PALETTE_VERSION, k=options.colors,
+            cell_px=cell_px, grid_w=gw, grid_h=gh, batch=batch,
+            frame_index=idx, frame_total=frame_total, ecc_percent=options.ecc_percent,
+            compressed=compressed, payload_len=frame_orig_len, payload_sha256=sha,
+        )
+        img = _render_frame(header, frame_payload, palette, bpc, cell_px, gw, gh,
+                            options.label, batch, idx, frame_total)
+        p = out_dir / f"qrtrans_{batch}_cm_{idx:03d}.png"
+        img.save(p, "PNG")
+        outputs.append(p)
+        if progress is not None:
+            progress(ProgressEvent("frame", idx, frame_total))
+
+    return CmEncodeResult(batch=batch, frame_count=frame_total, output_files=outputs)
+
+
+def _build_payload(files, dirs) -> bytes:
+    """自描述容器：4B 条数 + 每条(type1 + relpath(2B len + utf8) + len4B) + 文件 blob 拼接。"""
+    out = bytearray()
+    entries = []
+    blob = bytearray()
+    for f in files:
+        entries.append((b"F", f.relpath, len(f.content)))
+        blob.extend(f.content)
+    for d in dirs:
+        entries.append((b"D", d.relpath, 0))
+    out += struct.pack("!I", len(entries))
+    for t, relpath, ln in entries:
+        rp = relpath.encode("utf-8")
+        out += t + struct.pack("!H", len(rp)) + rp + struct.pack("!I", ln)
+    out += bytes(blob)
+    return bytes(out)
+
+
+def _chunk_with_rs(payload: bytes, bytes_per_frame: int, nsym: int):
+    out = []
+    for i in range(0, len(payload), bytes_per_frame):
+        chunk = payload[i:i + bytes_per_frame]
+        out.append((rs.rs_encode(chunk, nsym), len(chunk)))
+    if not out:
+        out.append((rs.rs_encode(b"", nsym), 0))
+    return out
+
+
+def _render_frame(header, frame_payload, palette, bpc, cell_px, gw, gh,
+                  label, batch, idx, total) -> Image.Image:
+    grid_w_px = gw * cell_px
+    grid_h_px = gh * cell_px
+    H = grid_h_px + (40 if label else 0)
+
+    # 先在「网格区」大小的临时图上绘制内部单元格 + finder 标记，
+    # 再 paste 到 canvas 顶部网格区。label 区单独绘制，确保标记不落入 label 区。
+    grid_img = Image.new("RGB", (grid_w_px, grid_h_px), "white")
+
+    header_bytes = cm_protocol.header_to_bytes(header)
+    head_idx = cm_protocol.bytes_to_indices(header_bytes, bpc)
+    pay_idx = cm_protocol.bytes_to_indices(frame_payload, bpc)
+    cells = head_idx + pay_idx
+
+    iw = gw - 2 * MARKER_CELL
+    ih = gh - 2 * MARKER_CELL
+    d = ImageDraw.Draw(grid_img)
+    ci = 0
+    for r in range(MARKER_CELL, MARKER_CELL + ih):
+        for c in range(MARKER_CELL, MARKER_CELL + iw):
+            if ci < len(cells):
+                color = palette[cells[ci]]
+                x0, y0 = c * cell_px, r * cell_px
+                d.rectangle([x0, y0, x0 + cell_px - 1, y0 + cell_px - 1], fill=color)
+            ci += 1
+
+    # 标记画在网格区 4 角，用 finder.draw_markers 的离网格色 MARKER_COLOR
+    draw_markers(grid_img, cell_px)
+
+    canvas = Image.new("RGB", (grid_w_px, H), "white")
+    canvas.paste(grid_img, (0, 0))
+
+    if label:
+        dl = ImageDraw.Draw(canvas)
+        dl.rectangle([0, grid_h_px, grid_w_px, H], fill="black")
+        dl.text((10, grid_h_px + 10), f"batch={batch} cm {idx}/{total}", fill="white")
+    return canvas
