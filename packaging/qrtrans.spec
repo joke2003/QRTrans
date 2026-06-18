@@ -12,6 +12,8 @@ binaries = collect_dynamic_libs('pyzbar')   # Windows: libzbar-64.dll, libiconv.
 hiddenimports = (
     collect_submodules('pyzbar')
     + collect_submodules('qrcode')
+    + collect_submodules('reedsolo')
+    + collect_submodules('qrtrans')
     + ['PIL']
 )
 
