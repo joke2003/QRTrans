@@ -69,12 +69,12 @@
 
 ---
 
-## 5. 纠错策略（Reed-Solomon，批量级 + 擦除纠正）
+## 5. 纠错策略（Reed-Solomon，每帧独立，v1）
 
-- 用 `reedsolo` 库对**整批 payload**（压缩后）做一次 RS（默认 12%，可 `--cm-ecc` 调），再分帧。
-- 解码端按 `frame_index` 把**缺失的帧当作擦除（erasure）**——RS 擦除纠正能力是错误纠正的 2 倍：12% 冗余可容忍约 **24% 帧丢失**仍完整还原。
-- 这与 QR 模式"每块独立、丢块=该文件不完整"不同：colormatrix 在冗余范围内可**从丢帧中恢复**。
-- **约束**：解码需至少 `(1−ecc_rate)` 比例的帧到场；不足则失败（`--strict` 与尽力恢复语义沿用：能 RS 还原即还原，不能则报错/告警）。
+- 用 `reedsolo` 库对**每一帧的载荷块**独立做 RS（默认冗余 12%，可 `--cm-ecc` 调），用于修正"单元色误判"（lossless 信道下实测 ~0%，RS 主要是保险）。
+- **语义与 QR 模式一致**：每帧独立、自描述（帧头含 frame_index/total）；**丢帧 = 该帧数据缺**，需重新截该帧（不跨帧擦除还原）。
+- 解码：到场帧的 RS 各自纠错；按 frame_index 拼装，帧齐全且 sha256 通过才完整还原；缺失帧则报缺哪帧（`--strict` 失败 / 默认尽力告警），与 QR 的恢复语义对齐。
+- **未来增强（v0.3，不在本次范围）**：批级交织 RS，把缺失帧当擦除，可在 ~24% 丢帧内自动还原（届时会升级协议版本号）。
 
 ---
 
@@ -91,11 +91,10 @@
 ```
 input(file|dir)
   └─[fs_walk]→ Records                                    # 复用
-      └─[chunker 概念]→ 批 payload bytes（含自描述元数据）
-          └─[zlib(可选)]→ bytes'
-              └─[reedsolo RS]→ bytes''                     # 批级 ECC
+          └─[chunker 概念]→ 批 payload bytes（含自描述元数据）
+              └─[zlib(可选)]→ bytes'
                   └─ 分帧（每帧 payload 区容量 = W×H − finder − header）
-                      └─ 逐帧：填帧头 + finder + 载荷单元格
+                      └─ 逐帧：载荷块 RS(~12%) → 填帧头 + finder + 载荷单元格
                           └─[PIL NEAREST 渲染全屏 PNG]
         progress: prepare / frame i/N
 ```
@@ -114,7 +113,7 @@ input(file|dir of PNG)
        │        └─ 拼出帧头 + 载荷 → 按 frame_index 收集
        └─ 未命中 → 该图走 QR 路径（pyzbar）
   └─ 按 magic 分流：colormatrix 帧聚合 / QR 载荷聚合
-       ├─ colormatrix：RS 纠错（缺失帧=擦除）→ 解压 → 校验 sha256 → 还原 Records → rebuild
+       ├─ colormatrix：每帧 RS 纠错 → 按 frame_index 拼装 → 帧齐全则解压 → 校验 sha256 → 还原 Records → rebuild
        └─ QR：沿用既有 decoder
 ```
 
@@ -157,7 +156,7 @@ input(file|dir of PNG)
   - 小文本、长文本（多帧）、中文/emoji、嵌套目录+空目录、二进制（含 NUL/高位字节，证明非文本也能走）。
   - 默认参数（16色/4px）往返一致。
   - `--colors 32`、`--cell-px 3`、`--no-compress`、`--cm-ecc 20` 各可调且往返一致。
-  - **丢帧可恢复**：删 1 帧在 RS 范围内仍完整还原；删超量帧失败/告警。
+  - **丢帧语义**：删 1 帧 → 解码报缺该帧、内容不完整（与 QR 一致，需重截）；`--strict` 失败、默认告警。（批级擦除还原是 v0.3 未来增强。）
   - **压缩自动**：文本触发压缩、随机字节不压缩（标志位正确）。
 - **解码自动检测**：QR 目录与 colormatrix 目录分别正确分流；混合目录正确。
 - **CLI**：默认 mode=colormatrix、`--colors`/`--cell-px` 生效、QR 用 `--mode array` 仍可。
