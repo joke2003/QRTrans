@@ -77,6 +77,10 @@ def colormatrix_encode(input_path: Path, out_dir: Path,
     if not files and not dirs:
         raise fs_walk.FsError(f"nothing to encode under {input_path}")
 
+    if options.cell_px not in cm_protocol.VALID_CELL_PX:
+        raise ValueError(
+            f"unsupported cell_px {options.cell_px}; allowed: {cm_protocol.VALID_CELL_PX}")
+
     batch = _normalize_batch(options.batch)
     palette = build_palette(options.colors)
     bpc = COLOR_BITS[options.colors]

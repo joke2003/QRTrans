@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 from PIL import Image
+from reedsolo import ReedSolomonError
 
 from . import fs_walk
 from .palette import build_palette, nearest, COLOR_BITS
@@ -27,7 +28,7 @@ def is_colormatrix_frame(image: Image.Image) -> bool:
 
 
 # cell_px 探测候选：解码端不知道 cell_px，逐个尝试直到头自洽（头里写的就是 cell_px）。
-_CANDIDATE_CELL_PX = (2, 3, 4, 5, 6, 8, 10)
+_CANDIDATE_CELL_PX = cm_protocol.VALID_CELL_PX
 # k 探测候选：头里也写了 k，但需先按某 k 解头才能读到它。
 _CANDIDATE_K = (16, 4, 8, 32, 64)
 
@@ -63,16 +64,18 @@ def _try_decode_header(image, corners, cell_px):
     ih = round((y1 - y0) / cell_px)
     if iw <= 0 or ih <= 0:
         return None
-    # 先采一块足够覆盖最大 bpc 头区的前若干单元，再对每个候选 k 切片试解。
-    need = max(cm_protocol.header_cells(COLOR_BITS[k]) for k in _CANDIDATE_K)
-    if iw * ih < need:
+    # 把 need 计算与 k 循环解耦：粗筛用「最少需求」（bpc 最大即 k=64 → 83 单元），
+    # 采样覆盖「最多需求」（bpc 最小即 k=4 → 248 单元），循环内再按当前 k 的 bpc 精确判断。
+    min_need = cm_protocol.header_cells(COLOR_BITS[64])
+    if iw * ih < min_need:
         return None
-    rgbs = _sample_interior_rgbs(image, x0, y0, cell_px, iw, ih, count=need)
-    if len(rgbs) < need:
-        return None
+    max_need = max(cm_protocol.header_cells(COLOR_BITS[k]) for k in _CANDIDATE_K)
+    rgbs = _sample_interior_rgbs(image, x0, y0, cell_px, iw, ih, count=max_need)
     for k in _CANDIDATE_K:
         bpc = COLOR_BITS[k]
         hcells = cm_protocol.header_cells(bpc)
+        if len(rgbs) < hcells:
+            continue
         palette = build_palette(k)
         idx = [nearest(palette, rgb) for rgb in rgbs[:hcells]]
         try:
@@ -90,6 +93,8 @@ def _try_decode_header(image, corners, cell_px):
 
 def _decode_one_frame(image):
     """单帧→(header, chunk)。探测 cell_px/k，精确截断 payload 区，RS 解码。"""
+    if image.mode != "RGB":
+        image = image.convert("RGB")
     corners = locate_markers(image)
     if corners is None:
         return None
@@ -117,7 +122,7 @@ def _decode_one_frame(image):
         cw_bytes = cm_protocol.indices_to_bytes(pay_idx, bpc, cw_len)
         try:
             chunk = rs.rs_decode(cw_bytes, nsym_v, header.payload_len)
-        except Exception:
+        except ReedSolomonError:
             return None
         return (header, chunk)
     return None
@@ -141,6 +146,13 @@ def colormatrix_decode(input_path: Path, output: Path,
     if not frames:
         raise ValueError("no colormatrix frames found")
 
+    batches = {h.batch for h, _ in frames}
+    totals = {h.frame_total for h, _ in frames}
+    comps = {h.compressed for h, _ in frames}
+    if len(batches) != 1 or len(totals) != 1 or len(comps) != 1:
+        raise ValueError(
+            f"inconsistent frames: batches={sorted(batches)}, totals={sorted(totals)}")
+
     frames.sort(key=lambda x: x[0].frame_index)
     frame_total = frames[0][0].frame_total
     present = {h.frame_index for h, _ in frames}
@@ -148,7 +160,6 @@ def colormatrix_decode(input_path: Path, output: Path,
     if present != expected:
         missing = sorted(expected - present)
         result.warnings.append(f"missing frames {missing}")
-        result.failed.append("incomplete batch")
         raise ValueError(f"missing frames {missing}")
 
     payload = b"".join(chunk for _, chunk in frames)
@@ -169,24 +180,33 @@ def colormatrix_decode(input_path: Path, output: Path,
 def _parse_payload(payload: bytes):
     """对称 cm_encoder._build_payload：
     4B 条数 + 每条(type1 + relpath(2B len + utf8) + content_len4B) + 末尾文件 blob 顺序拼接。"""
-    files: List[fs_walk.FileRecord] = []
-    dirs: List[fs_walk.DirRecord] = []
-    pos = 0
-    (count,) = struct.unpack_from("!I", payload, pos); pos += 4
-    metas = []
-    for _ in range(count):
-        t = payload[pos:pos + 1]; pos += 1
-        (rlen,) = struct.unpack_from("!H", payload, pos); pos += 2
-        relpath = payload[pos:pos + rlen].decode("utf-8"); pos += rlen
-        (clen,) = struct.unpack_from("!I", payload, pos); pos += 4
-        metas.append((t, relpath, clen))
-    for t, relpath, clen in metas:
-        content = payload[pos:pos + clen]; pos += clen
-        if t == b"F":
-            files.append(fs_walk.FileRecord(relpath, content))
-        else:
-            dirs.append(fs_walk.DirRecord(relpath))
-    return files, dirs
+    try:
+        pos = 0
+        (count,) = struct.unpack_from("!I", payload, pos); pos += 4
+        metas = []
+        for _ in range(count):
+            t = payload[pos:pos + 1]; pos += 1
+            (rlen,) = struct.unpack_from("!H", payload, pos); pos += 2
+            relpath = payload[pos:pos + rlen].decode("utf-8"); pos += rlen
+            (clen,) = struct.unpack_from("!I", payload, pos); pos += 4
+            metas.append((t, relpath, clen))
+        files: List[fs_walk.FileRecord] = []
+        dirs: List[fs_walk.DirRecord] = []
+        for t, relpath, clen in metas:
+            content = payload[pos:pos + clen]; pos += clen
+            if len(content) != clen:
+                raise ValueError("truncated content")
+            if t == b"F":
+                files.append(fs_walk.FileRecord(relpath, content))
+            elif t == b"D":
+                dirs.append(fs_walk.DirRecord(relpath))
+            else:
+                raise ValueError(f"bad entry type: {t!r}")
+        if pos != len(payload):
+            raise ValueError(f"trailing garbage: pos={pos} len={len(payload)}")
+        return files, dirs
+    except (struct.error, UnicodeDecodeError, ValueError) as e:
+        raise ValueError(f"malformed payload: {e}") from e
 
 
 def _write_output(files, dirs, output: Path) -> None:

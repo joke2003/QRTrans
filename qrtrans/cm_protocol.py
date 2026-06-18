@@ -8,6 +8,7 @@ from .palette import COLOR_BITS as COLOR_BITS_LOOKUP
 CM_MAGIC = b"CMTX"
 CM_VERSION = 1
 PALETTE_VERSION = 1
+VALID_CELL_PX = (3, 4, 5, 6, 8, 10, 12)   # cell_px<3 采样太脆，不支持
 _HEADER_FMT = "!4sBBBBHHHHBBI32s"
 
 
