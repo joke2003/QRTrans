@@ -17,7 +17,9 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          # Python 3.8 是最后一个支持 Windows 7 的版本。
+          # 用 3.8 构建的 exe 可在 Win7 SP1(+UCRT) ~ Win11 上运行。
+          python-version: '3.8'
 
       - name: Install dependencies
         shell: pwsh
