@@ -1,6 +1,5 @@
 from __future__ import annotations
 import hashlib
-import math
 import secrets
 import struct
 import zlib
@@ -12,19 +11,12 @@ from PIL import Image, ImageDraw
 from . import fs_walk
 from .palette import build_palette, COLOR_BITS
 from . import cm_protocol, rs
+from .cm_protocol import nsym as _nsym
 from .finder import draw_markers, MARKER_CELL
 from .progress import ProgressCallback, ProgressEvent
 
-# 头序列化后的固定字节数：struct body 54 + batch 4 + crc 4 = 62
-_HEADER_BYTES = 54 + 4 + 4
 
-
-def _header_cells(bpc: int) -> int:
-    """头占用的单元格数 = ceil(62*8 / bpc)。"""
-    return math.ceil(_HEADER_BYTES * 8 / bpc)
-
-
-def _payload_bytes_per_frame(payload_cells: int, bpc: int, nsym: int) -> int:
+def _payload_bytes_per_frame(payload_cells: int, bpc: int, nsym_val: int) -> int:
     """每帧 RS 编码前的原始数据字节数。
 
     _render_frame 渲染的是 RS 编码后的码字（每块 255B），因此可用单元换算成
@@ -35,7 +27,7 @@ def _payload_bytes_per_frame(payload_cells: int, bpc: int, nsym: int) -> int:
     num_blocks = max_codeword_bytes // rs.BLOCK
     if num_blocks < 1:
         raise ValueError(f"screen/cell_px too small for RS codeword region")
-    return num_blocks * (rs.BLOCK - nsym)
+    return num_blocks * (rs.BLOCK - nsym_val)
 
 
 @dataclass(frozen=True)
@@ -73,10 +65,6 @@ def _normalize_batch(batch: str) -> str:
     return _new_batch()
 
 
-def _nsym(percent: int) -> int:
-    return max(2, min(254, round(255 * percent / 100)))
-
-
 def _grid_dims(screen, cell_px):
     sw, sh = screen
     return sw // cell_px, sh // cell_px
@@ -108,7 +96,7 @@ def colormatrix_encode(input_path: Path, out_dir: Path,
     gw, gh = _grid_dims(options.screen, cell_px)
     iw = gw - 2 * MARKER_CELL
     ih = gh - 2 * MARKER_CELL
-    header_cells = _header_cells(bpc)
+    header_cells = cm_protocol.header_cells(bpc)
     payload_cells_per_frame = iw * ih - header_cells
     if payload_cells_per_frame < 1:
         raise ValueError(f"screen/cell_px too small for payload region")

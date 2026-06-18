@@ -1,5 +1,6 @@
 from __future__ import annotations
 import binascii
+import math
 import struct
 from dataclasses import dataclass
 from .palette import COLOR_BITS as COLOR_BITS_LOOKUP
@@ -73,3 +74,31 @@ def indices_to_bytes(indices: list, bits_per_cell: int, original_len: int) -> by
     for i in range(0, len(bits), 8):
         out.append(int(bits[i:i + 8], 2))
     return bytes(out[:original_len])
+
+
+# ---- 编解码共享的容量 / RS 数学 ----
+HEADER_BYTES = 54 + 4 + 4   # struct body 54 + batch 4 + crc 4
+
+
+def header_cells(bpc: int) -> int:
+    """头序列化后占用的单元格数 = ceil(HEADER_BYTES*8 / bpc)。"""
+    return math.ceil(HEADER_BYTES * 8 / bpc)
+
+
+def nsym(ecc_percent: int) -> int:
+    """ecc_percent → RS 冗余字节数（钳到 [2, 254]，与 rs.BLOCK 一致）。"""
+    return max(2, min(254, round(255 * ecc_percent / 100)))
+
+
+def codeword_len(payload_len: int, nsym_val: int) -> int:
+    """给定原始数据块长度与 nsym，返回 RS 编码后的码字字节数。
+
+    rs.rs_encode 把数据按 (255-nsym) 分块、每块扩到 255；码字 = num_blocks*255。
+    空输入不 pad（pad=0，循环不执行），rs.rs_encode(b"", n) 返回 0 字节，
+    故 payload_len<=0 时返回 0 与之对齐（实测确认，非 255）。
+    """
+    if payload_len <= 0:
+        return 0
+    bd = 255 - nsym_val
+    num_blocks = math.ceil(payload_len / bd)
+    return num_blocks * 255
