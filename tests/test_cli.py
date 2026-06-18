@@ -130,3 +130,43 @@ def test_cli_qr_default_grid_is_4x2(tmp_path):
     from qrtrans.qr_scan import scan
     frames = list(out.glob("qrtrans_grid42001_frame_*.png"))
     assert max(len(scan(Image.open(f))) for f in frames) == 8   # 4x2=8
+
+
+def test_cli_colormatrix_no_compress_roundtrip(tmp_path):
+    src = tmp_path / "n.txt"; src.write_text("no compress 你好")
+    out = tmp_path / "o"; dec = tmp_path / "d.txt"
+    assert _run(["encode", str(src), "-o", str(out), "--no-compress", "--batch", "nocom001"]).returncode == 0
+    assert _run(["decode", str(out), "-o", str(dec)]).returncode == 0
+    assert dec.read_text(encoding="utf-8") == "no compress 你好"
+
+
+def test_cli_colormatrix_missing_frame_fails(tmp_path):
+    src = tmp_path / "big.txt"; src.write_text("Z" * 20000)
+    out = tmp_path / "o"
+    _run(["encode", str(src), "-o", str(out), "--no-compress", "--batch", "miss0001"])
+    pngs = sorted(out.glob("*.png")); pngs[0].unlink()
+    r = _run(["decode", str(out), "-o", str(tmp_path / "dec.txt")])
+    assert r.returncode != 0
+    assert "missing" in r.stderr.lower() or "error" in r.stderr.lower()
+
+
+def test_cli_default_mode_roundtrip(tmp_path):
+    # 默认 mode 下端到端可用（不只看文件名）
+    src = tmp_path / "n.txt"; src.write_text("default rt")
+    out = tmp_path / "o"; dec = tmp_path / "d.txt"
+    assert _run(["encode", str(src), "-o", str(out), "--batch", "dfrt0001"]).returncode == 0
+    assert _run(["decode", str(out), "-o", str(dec)]).returncode == 0
+    assert dec.read_text(encoding="utf-8") == "default rt"
+
+
+def test_cli_decode_mixed_types_fails(tmp_path):
+    # cm 帧与一个无关 PNG 混在目录 → 报错（不静默走错路径）
+    src = tmp_path / "n.txt"; src.write_text("mix")
+    out = tmp_path / "o"
+    _run(["encode", str(src), "-o", str(out), "--batch", "mix00001"])  # 产 cm 帧
+    # 加一张无关白图
+    from PIL import Image
+    Image.new("RGB", (50, 50), "white").save(out / "zzz_noise.png")
+    r = _run(["decode", str(out), "-o", str(tmp_path / "dec.txt")])
+    assert r.returncode != 0
+    assert "mixed" in r.stderr.lower()

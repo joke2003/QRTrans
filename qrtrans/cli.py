@@ -67,8 +67,8 @@ def _build_parser() -> argparse.ArgumentParser:
     enc = sub.add_parser("encode", help="把文本文件/目录编码为 QR（含阵列）")
     enc.add_argument("input", type=Path)
     enc.add_argument("-o", "--outdir", type=Path, required=True)
-    enc.add_argument("--mode", choices=["colormatrix", "array", "single"],
-                     default="colormatrix")
+    enc.add_argument("--mode", choices=["colormatrix", "array", "single"], default="colormatrix",
+                     help="默认 colormatrix（高密度）；QR 用 array/single（旧默认为 array）")
     enc.add_argument("--screen", type=_parse_screen, default=(1920, 1080),
                      metavar="WxH", help="目标屏幕尺寸，默认 1920x1080（仅 array）")
     enc.add_argument("--module-px", type=int, default=3, help="每模块像素，默认 3")
@@ -78,7 +78,8 @@ def _build_parser() -> argparse.ArgumentParser:
     enc.add_argument("--chunk-raw-bytes", type=int, default=1300)
     enc.add_argument("--colors", type=int, default=16, choices=[4, 8, 16, 32, 64])
     enc.add_argument("--cell-px", type=int, default=4)
-    enc.add_argument("--cm-ecc", type=int, default=12)
+    enc.add_argument("--cm-ecc", type=int, default=12,
+                     help="colormatrix Reed-Solomon 冗余百分比（推荐 8–20）")
     cmcomp = enc.add_mutually_exclusive_group()
     cmcomp.add_argument("--compress", dest="compress", action="store_true", default=True)
     cmcomp.add_argument("--no-compress", dest="compress", action="store_false")
@@ -137,9 +138,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from .cm_decoder import is_colormatrix_frame, colormatrix_decode
             from . import fs_walk
             imgs = fs_walk.gather_images(args.input)
-            use_cm = bool(imgs) and is_colormatrix_frame(Image.open(imgs[0]).convert("RGB"))
+            if not imgs:
+                print(f"error: no images found in {args.input}", file=sys.stderr)
+                return _EXIT_FAIL
+            flags = [is_colormatrix_frame(Image.open(p).convert("RGB")) for p in imgs]
+            if all(flags):
+                use_cm = True
+            elif not any(flags):
+                use_cm = False
+            else:
+                print("error: input contains mixed frame types (some colormatrix, some not); "
+                      "decode a single encoding type at a time", file=sys.stderr)
+                return _EXIT_FAIL
             if use_cm:
-                colormatrix_decode(args.input, args.output, progress=pp)
+                res = colormatrix_decode(args.input, args.output, progress=pp)
+                for w in res.warnings:
+                    print(f"warning: {w}", file=sys.stderr)
+                for f in res.files_written:
+                    print(f"file: {f}")
+                for d in res.dirs_created:
+                    print(f"dir:  {d}")
+                if res.failed:
+                    return _EXIT_PARTIAL
             else:
                 res = decode(args.input, args.output, DecodeOptions(strict=args.strict), progress=pp)
                 for w in res.warnings:
