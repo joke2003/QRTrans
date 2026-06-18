@@ -22,3 +22,50 @@ def test_progress_callback_is_callable_type():
     cb: ProgressCallback = lambda e: events.append(e)
     cb(ProgressEvent("scan", 1, 1))
     assert events == [ProgressEvent("scan", 1, 1)]
+
+
+from qrtrans.encoder import encode, EncodeOptions
+
+
+def _opts(**over):
+    base = dict(mode="array", screen=(1920, 1080), module_px=3, grid="3x1",
+                ec="M", chunk_raw_bytes=1300, label=True, batch="prog0001")
+    base.update(over)
+    return EncodeOptions(**base)
+
+
+def _capture():
+    events = []
+
+    def cb(ev):
+        events.append(ev)
+    return cb, events
+
+
+def test_encode_array_emits_prepare_then_frames(tmp_path):
+    src = tmp_path / "a.txt"
+    src.write_text("Z" * 4000)  # 4 块 -> 2 帧（per_frame=3）
+    cb, events = _capture()
+    encode(src, tmp_path / "out", _opts(mode="array", batch="frame001"), progress=cb)
+    assert events[0] == ProgressEvent("prepare", 4, 4)
+    frames = [e for e in events if e.phase == "frame"]
+    assert [(e.current, e.total) for e in frames] == [(1, 2), (2, 2)]
+
+
+def test_encode_single_emits_qr_events(tmp_path):
+    src = tmp_path / "a.txt"
+    src.write_text("A" * 5000)  # 4 块
+    cb, events = _capture()
+    encode(src, tmp_path / "out", _opts(mode="single", batch="qrevt001"), progress=cb)
+    assert events[0].phase == "prepare"
+    qrs = [e for e in events if e.phase == "qr"]
+    assert [(e.current, e.total) for e in qrs] == [(1, 4), (2, 4), (3, 4), (4, 4)]
+
+
+def test_encode_without_progress_still_works(tmp_path):
+    # 不传 progress：行为与现状一致（向后兼容）
+    src = tmp_path / "a.txt"
+    src.write_text("hello")
+    res = encode(src, tmp_path / "out", _opts(batch="noprog01"))  # progress 默认 None
+    assert res.payload_count >= 1
+    assert list((tmp_path / "out").glob("*.png"))

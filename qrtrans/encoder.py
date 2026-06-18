@@ -2,7 +2,7 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from PIL import Image
 
 from . import chunker, fs_walk, protocol, qr_render
@@ -10,6 +10,7 @@ from .array_pack import (
     auto_grid, parse_grid, paginate, pack, FrameSpec,
 )
 from .fs_walk import FileRecord, DirRecord
+from .progress import ProgressCallback, ProgressEvent
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,12 @@ def _resolve_framespec(options: EncodeOptions) -> FrameSpec:
     return FrameSpec(rows=rows, cols=cols, module_px=options.module_px, label=options.label)
 
 
-def encode(input_path: Path, out_dir: Path, options: EncodeOptions) -> EncodeResult:
+def encode(
+    input_path: Path,
+    out_dir: Path,
+    options: EncodeOptions,
+    progress: Optional[ProgressCallback] = None,
+) -> EncodeResult:
     if options.mode not in ("single", "array"):
         raise ValueError(f"bad mode: {options.mode!r}")
 
@@ -75,28 +81,34 @@ def encode(input_path: Path, out_dir: Path, options: EncodeOptions) -> EncodeRes
     batch = options.batch or _new_batch_id()
     payloads = _build_payloads(files, dirs, batch, options.chunk_raw_bytes)
 
+    if progress is not None:
+        progress(ProgressEvent("prepare", len(payloads), len(payloads)))
+
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs: List[Path] = []
 
     if options.mode == "single":
+        total = len(payloads)
         for i, pl in enumerate(payloads, start=1):
             img = qr_render.render(pl, module_px=options.module_px, ec=options.ec)
-            fname = f"qrtrans_{batch}_{i:04d}.png"
-            p = out_dir / fname
+            p = out_dir / f"qrtrans_{batch}_{i:04d}.png"
             img.save(p, "PNG")
             outputs.append(p)
+            if progress is not None:
+                progress(ProgressEvent("qr", i, total))
     else:
         spec = _resolve_framespec(options)
-        images = [qr_render.render(pl, module_px=options.module_px, ec=options.ec)
-                  for pl in payloads]
-        frames = paginate(images, spec.per_frame)
-        total = len(frames)
-        for idx, frame_imgs in enumerate(frames, start=1):
-            canvas = pack(frame_imgs, spec, batch=batch,
+        payload_frames = paginate(payloads, spec.per_frame)
+        total = len(payload_frames)
+        for idx, frame_payloads in enumerate(payload_frames, start=1):
+            images = [qr_render.render(pl, module_px=options.module_px, ec=options.ec)
+                      for pl in frame_payloads]
+            canvas = pack(images, spec, batch=batch,
                           frame_index=idx, frame_total=total)
-            fname = f"qrtrans_{batch}_frame_{idx:02d}.png"
-            p = out_dir / fname
+            p = out_dir / f"qrtrans_{batch}_frame_{idx:02d}.png"
             canvas.save(p, "PNG")
             outputs.append(p)
+            if progress is not None:
+                progress(ProgressEvent("frame", idx, total))
 
     return EncodeResult(batch=batch, payload_count=len(payloads), output_files=outputs)
