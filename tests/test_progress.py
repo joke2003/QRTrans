@@ -85,8 +85,12 @@ def test_decode_emits_scan_and_reassemble(tmp_path):
     res = decode(out, tmp_path / "dec", DecodeOptions(), progress=cb)
     scans = [e for e in events if e.phase == "scan"]
     reass = [e for e in events if e.phase == "reassemble"]
-    assert scans and scans[-1].current == scans[-1].total
-    assert reass and reass[-1].current == reass[-1].total
+    assert scans, "no scan events"
+    assert reass, "no reassemble events"
+    expected_scan = [(i, scans[0].total) for i in range(1, scans[0].total + 1)]
+    expected_reass = [(i, reass[0].total) for i in range(1, reass[0].total + 1)]
+    assert [(e.current, e.total) for e in scans] == expected_scan
+    assert [(e.current, e.total) for e in reass] == expected_reass
     assert (tmp_path / "dec" / "top.txt").read_text(encoding="utf-8") == "T"
 
 
