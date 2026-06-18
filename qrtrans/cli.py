@@ -60,6 +60,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    # Windows 控制台默认编码（cp1252 等）无法打印 CJK，会让 argparse --help/print 崩溃。
+    # 统一切到 UTF-8（errors='replace' 保证绝不抛 UnicodeEncodeError）。
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = _build_parser()
     args = parser.parse_args(argv)
 
