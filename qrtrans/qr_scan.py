@@ -1,12 +1,14 @@
 from __future__ import annotations
 import json
 from typing import List
-from pyzbar.pyzbar import decode as pyzbar_decode
 from PIL import Image
 from .protocol import Payload, MAGIC
 
 
 def scan(image: Image.Image) -> List[Payload]:
+    # 延迟导入：pyzbar 在 import 时会立即加载 libzbar 共享库。
+    # 延迟到真正需要解码时再导入，使包导入（与 encode/--help 路径）不依赖 libzbar。
+    from pyzbar.pyzbar import decode as pyzbar_decode
     results = pyzbar_decode(image)
     payloads: List[Payload] = []
     for r in results:
