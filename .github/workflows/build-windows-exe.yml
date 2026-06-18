@@ -1,0 +1,59 @@
+name: build-windows-exe
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # tag 触发时 softprops/action-gh-release 需要写 Release 权限
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]" pyinstaller
+
+      - name: Build exe
+        shell: pwsh
+        run: pyinstaller packaging/qrtrans.spec --noconfirm
+
+      - name: Smoke + roundtrip test (ASCII)
+        shell: pwsh
+        run: |
+          .\dist\qrtrans.exe --help
+          if ($LASTEXITCODE -ne 0) { Write-Error "--help failed"; exit 1 }
+          $tmp = "$env:TEMP\qrt_smoke"
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          Set-Content -Path "$tmp\in.txt" -Value "qrtrans ci smoke 12345"
+          .\dist\qrtrans.exe encode "$tmp\in.txt" -o "$tmp\out" --batch cismoke1
+          if ($LASTEXITCODE -ne 0) { Write-Error "encode failed"; exit 1 }
+          .\dist\qrtrans.exe decode "$tmp\out" -o "$tmp\dec.txt"
+          if ($LASTEXITCODE -ne 0) { Write-Error "decode failed"; exit 1 }
+          $a = (Get-Content "$tmp\in.txt" -Raw).Trim()
+          $b = (Get-Content "$tmp\dec.txt" -Raw).Trim()
+          if ($a -ne $b) { Write-Error "roundtrip mismatch: '$a' vs '$b'"; exit 1 }
+          Write-Host "roundtrip OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qrtrans-windows-exe
+          path: dist/qrtrans.exe
+          if-no-files-found: error
+
+      - name: Attach to Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/qrtrans.exe
