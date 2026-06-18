@@ -70,7 +70,7 @@ def _build_parser() -> argparse.ArgumentParser:
     enc.add_argument("--mode", choices=["colormatrix", "array", "single"], default="colormatrix",
                      help="默认 colormatrix（高密度）；QR 用 array/single（旧默认为 array）")
     enc.add_argument("--screen", type=_parse_screen, default=(1920, 1080),
-                     metavar="WxH", help="目标屏幕尺寸，默认 1920x1080（仅 array）")
+                     metavar="WxH", help="目标屏幕尺寸，默认 1920x1080（array 与 colormatrix 均使用）")
     enc.add_argument("--module-px", type=int, default=3, help="每模块像素，默认 3")
     enc.add_argument("--grid", default="4x2", metavar="WxH",
                      help="QR 阵列网格 WxH（列x行，如 4x2）或 auto；仅 QR array")
@@ -141,7 +141,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if not imgs:
                 print(f"error: no images found in {args.input}", file=sys.stderr)
                 return _EXIT_FAIL
-            flags = [is_colormatrix_frame(Image.open(p).convert("RGB")) for p in imgs]
+            flags = []
+            for p in imgs:
+                with Image.open(p) as im:
+                    flags.append(is_colormatrix_frame(im.convert("RGB")))
             if all(flags):
                 use_cm = True
             elif not any(flags):

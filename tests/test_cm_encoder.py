@@ -58,3 +58,27 @@ def test_encode_payload_fits_no_truncation(tmp_path):
     assert max_payload_bytes > 0
     # 进一步：实际解码往返留给任务 6；这里至少保证 encode 不报错、产物存在
     assert list(out.glob("*.png"))
+
+
+def test_encode_random_bytes_not_compressed(tmp_path):
+    # 不可压缩内容应触发 compressed=0（有收益才压）
+    import os
+    from qrtrans.cm_decoder import _try_decode_header
+    from qrtrans.finder import locate_markers
+    src = tmp_path / "rand.bin"; src.write_bytes(os.urandom(5000))
+    out = tmp_path / "o"
+    colormatrix_encode(src, out, _opts(batch="rand0001"))
+    # 读第一帧头验证 compressed==0
+    p = sorted(out.glob("*.png"))[0]
+    with Image.open(p) as img:
+        img.load()
+        corners = locate_markers(img)
+        info = None
+        if corners is not None:
+            for cp in (3, 4, 5, 6, 8, 10, 12):
+                info = _try_decode_header(img, corners, cp)
+                if info:
+                    break
+        assert info is not None
+        header = info[0]
+        assert header.compressed == 0
