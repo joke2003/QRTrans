@@ -63,3 +63,12 @@ def test_cli_decode_partial_returns_nonzero(tmp_path):
     dest = tmp_path / "dec"
     r = _run(["decode", str(out), "-o", str(dest)])
     assert r.returncode == 1  # partial success
+
+def test_cli_encode_progress_to_stderr(tmp_path):
+    # subprocess 捕获 stderr → 非 tty → 仅打阶段完成行；断言含进度字样
+    src = tmp_path / "big.txt"
+    src.write_text("X" * 4000)  # 多块，多帧
+    out = tmp_path / "out"
+    r = _run(["encode", str(src), "-o", str(out), "--batch", "cliprog1"])
+    assert r.returncode == 0, r.stderr
+    assert ("写帧" in r.stderr) or ("%" in r.stderr)

@@ -15,6 +15,38 @@ _EXIT_PARTIAL = 1
 _EXIT_FAIL = 2
 
 
+_PROGRESS_LABELS = {
+    "prepare": "准备",
+    "frame": "写帧",
+    "qr": "生成",
+    "scan": "扫描",
+    "reassemble": "还原",
+}
+
+
+def _make_progress_printer():
+    is_tty = sys.stderr.isatty()
+
+    def _print(ev):
+        label = _PROGRESS_LABELS.get(ev.phase, ev.phase)
+        if ev.total > 0:
+            pct = ev.current * 100 // ev.total
+            line = f"{label} {ev.current}/{ev.total} ({pct}%)"
+        else:
+            line = label
+        if is_tty:
+            sys.stderr.write("\r" + line + "   ")
+            sys.stderr.flush()
+            if ev.current == ev.total:
+                sys.stderr.write("\n")
+        else:
+            # 非 tty（重定向/CI 捕获）：仅阶段完成时打一行，避免 \r 污染日志
+            if ev.current == ev.total:
+                sys.stderr.write(line + "\n")
+
+    return _print
+
+
 def _parse_screen(s: str) -> tuple:
     m = re.fullmatch(r"(\d+)[xX](\d+)", s)
     if not m:
@@ -77,7 +109,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             label=args.label, batch=args.batch,
         )
         try:
-            res = encode(args.input, args.outdir, opts)
+            res = encode(args.input, args.outdir, opts,
+                         progress=_make_progress_printer())
         except (FsError, ValueError) as e:
             print(f"error: {e}", file=sys.stderr)
             return _EXIT_FAIL
@@ -88,7 +121,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.command == "decode":
         opts = DecodeOptions(strict=args.strict)
         try:
-            res = decode(args.input, args.output, opts)
+            res = decode(args.input, args.output, opts,
+                         progress=_make_progress_printer())
         except DecodeError as e:
             print(f"error: {e}", file=sys.stderr)
             return _EXIT_FAIL
