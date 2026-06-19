@@ -4,10 +4,14 @@ import os
 from PyInstaller.utils.hooks import collect_submodules
 
 PROJECT_ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
-hiddenimports = collect_submodules('PIL') + ['tkinter', 'PIL.ImageTk']
+hiddenimports = (
+    collect_submodules('PIL')
+    + ['tkinter', 'PIL.ImageTk',
+       'qrtrans_viewer', 'qrtrans_viewer.gui', 'qrtrans_viewer.core', 'qrtrans_viewer.__main__']
+)
 
 a = Analysis(
-    [os.path.join(PROJECT_ROOT, 'qrtrans_viewer', '__main__.py')],
+    [os.path.join(SPECPATH, 'entry_viewer.py')],
     pathex=[PROJECT_ROOT],
     binaries=[],
     datas=[],
