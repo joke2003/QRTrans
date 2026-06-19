@@ -74,14 +74,27 @@ qrtrans-viewer <dir|image> [--interval <秒>] [--loop] [--no-overlay]
 - 左下小字：`<文件名> · i/N · <间隔>s · ▶/⏸`；半透明或纯色底，不浪费主体像素。
 - 启动首帧额外显示一行：`本机分辨率 WxH（编码请用 --screen WxH 匹配以 1:1 铺满）`，3 秒后淡出（便于非默认分辨率场景核对）。
 
+### 写入本地 config（便携）
+- **每次启动**把实测全屏分辨率写到 **当前工作目录** 的 `./qrtrans.json`：`{"screen": [W, H], "recorded_at": "<ISO8601>"}`。
+- **best-effort**：只读目录/写失败时静默忽略，不影响播放。
+- **位置选 CWD 而非用户家目录**：便携使用（exe + config + 数据同目录一锅端，如 U 盘），不污染家目录、不限账号；前提是 viewer 与 encoder 在**同一目录**运行（见 §5）。
+
 ---
 
-## 5. 与 encoder 的协同（密度最大化）
+## 5. 与 encoder 的协同（密度最大化，经 CWD 本地 config）
 
-- encoder 默认 `--screen 1920x1080`；1080p 显示器上 viewer 真全屏 = 1920×1080 可用 → **默认即 1:1 铺满、零浪费**，无需手动配合。
-- 非 1080p：viewer 启动横幅报告自身分辨率 → 用户在编码端传匹配 `--screen` → 1:1 铺满。
+**拓扑**：encoder 与 viewer 跑在**同一台机器**（编码机 A：encoder 出图 + viewer 显示；对端 B 拍摄/截图 A 的屏）。config 是 A 本地文件，两者同目录即可互访。气隙下无跨机通信。
+
+**机制（解决"viewer 报尺寸时 encoder 已跑完"的时序问题）**：
+1. **viewer 每次启动**把实测全屏分辨率写到 **CWD 的 `./qrtrans.json`**（见 §4，best-effort）。viewer 实测值是**权威**（含 DPI/真全屏真实可绘区域），比 encoder 自猜屏分辨率更准。
+2. **encoder**：启动时若用户**未显式传 `--screen`**，读取 `./qrtrans.json` 的 `screen` 作默认；文件不存在才回退 `1920x1080`。**显式 `--screen` 永远最高优先级**（覆盖 config）。
+3. **正常流程**：首次在该目录开一次 viewer（哪怕几秒）→ 它记下分辨率 → 之后 encoder 自动用该值，无需记数字/手动传。
+
+- 1080p 屏：默认就吻合、零浪费；非 1080p：开一次 viewer 后 encoder 自动适配。
 - 不匹配时 viewer 仍 1:1 居中（留边），解码正确但密度略降。
-- **无跨机通信**（气隙）；纯"默认对齐 + 自报尺寸"。
+- 若 encoder 与 viewer 不在同一目录/不同机器（罕见），config 够不着 → 回退手动 `--screen`。
+
+> **impl 备注**：encoder 侧"读 `./qrtrans.json` 作 --screen 默认"是对 `qrtrans` CLI 的小改动（属于本特性的实现计划，不另立项）。
 
 ---
 
@@ -112,6 +125,7 @@ qrtrans-viewer <dir|image> [--interval <秒>] [--loop] [--no-overlay]
   - 索引前进/后退/首末、越界钳制、循环开关下末张行为。
   - 间隔调整上下限、播放/暂停状态转移。
   - advance 决策（到点→下一张；暂停→不进）。
+  - **config 读写**：`write_config(screen)` 写 `./qrtrans.json`（含 recorded_at）；`read_config()` 读回；坏 JSON/缺文件返回 None；只读目录 best-effort 不抛。
 - **GUI 冒烟**：`subprocess` 启动 viewer 给定一个临时目录图、若干秒后杀进程、断言进程启动成功（退出码不等于"输入错误"）。需图形环境的深度 GUI 断言（截图比对）不在范围。
 - **CLI**：`--interval`/`--loop`/`--no-overlay` 解析；非法路径退出码 2。
 
