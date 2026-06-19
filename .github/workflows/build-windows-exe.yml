@@ -31,6 +31,16 @@ jobs:
         shell: pwsh
         run: pyinstaller packaging/qrtrans.spec --noconfirm
 
+      - name: Build viewer exe
+        shell: pwsh
+        run: pyinstaller packaging/qrtrans_viewer.spec --noconfirm
+
+      - name: Viewer smoke (help)
+        shell: pwsh
+        run: |
+          .\dist\qrtrans-viewer.exe --help
+          if ($LASTEXITCODE -ne 0) { Write-Error "viewer --help failed"; exit 1 }
+
       - name: Smoke + roundtrip test (ASCII)
         shell: pwsh
         run: |
@@ -54,8 +64,17 @@ jobs:
           path: dist/qrtrans.exe
           if-no-files-found: error
 
+      - name: Upload viewer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qrtrans-viewer-windows-exe
+          path: dist/qrtrans-viewer.exe
+          if-no-files-found: error
+
       - name: Attach to Release (on tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/qrtrans.exe
+          files: |
+            dist/qrtrans.exe
+            dist/qrtrans-viewer.exe
