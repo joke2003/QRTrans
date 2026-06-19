@@ -170,3 +170,32 @@ def test_cli_decode_mixed_types_fails(tmp_path):
     r = _run(["decode", str(out), "-o", str(tmp_path / "dec.txt")])
     assert r.returncode != 0
     assert "mixed" in r.stderr.lower()
+
+
+def test_cli_encode_reads_viewer_config_for_screen(tmp_path, monkeypatch):
+    import json
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "qrtrans.json").write_text(json.dumps({"screen": [800, 600]}))
+    src = tmp_path / "n.txt"; src.write_text("config screen")
+    out = tmp_path / "o"
+    r = _run(["encode", str(src), "-o", str(out), "--no-label", "--batch", "cfg00001"])
+    assert r.returncode == 0, r.stderr
+    from PIL import Image
+    p = next(out.glob("*.png"))
+    with Image.open(p) as im:
+        assert im.size == (800, 600)
+
+
+def test_cli_encode_explicit_screen_overrides_config(tmp_path, monkeypatch):
+    import json
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "qrtrans.json").write_text(json.dumps({"screen": [800, 600]}))
+    src = tmp_path / "n.txt"; src.write_text("explicit")
+    out = tmp_path / "o"
+    r = _run(["encode", str(src), "-o", str(out), "--no-label",
+              "--screen", "640x480", "--batch", "exp00001"])
+    assert r.returncode == 0
+    from PIL import Image
+    p = next(out.glob("*.png"))
+    with Image.open(p) as im:
+        assert im.size == (640, 480)

@@ -57,6 +57,19 @@ def _parse_screen(s: str) -> tuple:
     return (w, h)
 
 
+def _screen_from_config_or_default():
+    import json
+    from pathlib import Path
+    try:
+        data = json.loads(Path("qrtrans.json").read_text(encoding="utf-8"))
+        w, h = int(data["screen"][0]), int(data["screen"][1])
+        if w > 0 and h > 0:
+            return (w, h)
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        pass
+    return (1920, 1080)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="qrtrans",
@@ -69,8 +82,8 @@ def _build_parser() -> argparse.ArgumentParser:
     enc.add_argument("-o", "--outdir", type=Path, required=True)
     enc.add_argument("--mode", choices=["colormatrix", "array", "single"], default="colormatrix",
                      help="默认 colormatrix（高密度）；QR 用 array/single（旧默认为 array）")
-    enc.add_argument("--screen", type=_parse_screen, default=(1920, 1080),
-                     metavar="WxH", help="目标屏幕尺寸，默认 1920x1080（array 与 colormatrix 均使用）")
+    enc.add_argument("--screen", type=_parse_screen, default=None, metavar="WxH",
+                     help="目标屏幕尺寸；未指定时读 ./qrtrans.json，再否则默认 1920x1080")
     enc.add_argument("--module-px", type=int, default=3, help="每模块像素，默认 3")
     enc.add_argument("--grid", default="4x2", metavar="WxH",
                      help="QR 阵列网格 WxH（列x行，如 4x2）或 auto；仅 QR array")
@@ -112,16 +125,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.command == "encode":
         pp = _make_progress_printer()
+        screen = args.screen if args.screen is not None else _screen_from_config_or_default()
         try:
             if args.mode == "colormatrix":
                 from .cm_encoder import colormatrix_encode, CmEncodeOptions
                 opts = CmEncodeOptions(colors=args.colors, cell_px=args.cell_px,
                                        ecc_percent=args.cm_ecc, compress=args.compress,
-                                       screen=args.screen, batch=args.batch, label=args.label)
+                                       screen=screen, batch=args.batch, label=args.label)
                 res = colormatrix_encode(args.input, args.outdir, opts, progress=pp)
                 print(f"encoded batch={res.batch} frames={res.frame_count} -> {args.outdir}")
             else:
-                opts = EncodeOptions(mode=args.mode, screen=args.screen, module_px=args.module_px,
+                opts = EncodeOptions(mode=args.mode, screen=screen, module_px=args.module_px,
                                      grid=args.grid, ec=args.ec, chunk_raw_bytes=args.chunk_raw_bytes,
                                      label=args.label, batch=args.batch)
                 res = encode(args.input, args.outdir, opts, progress=pp)
