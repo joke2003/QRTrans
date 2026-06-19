@@ -95,3 +95,80 @@ def test_write_config_readonly_dir_best_effort(tmp_path, monkeypatch):
         write_config((1280, 720))   # 不应抛
     finally:
         tmp_path.chmod(0o700)
+
+
+def test_state_empty_list_safe():
+    s = ViewerState(images=[], index=0, playing=True, interval=0.0, loop=True)
+    assert s.next() is None
+    assert s.prev() is None
+    assert s.first() is None
+    assert s.last() is None
+    assert s.advance() is None
+
+
+def test_state_prev_clamp_at_start():
+    s = ViewerState(images=[Path("a"), Path("b")], index=0,
+                    playing=False, interval=3.0, loop=False)
+    assert s.prev() == Path("a")   # 首部钳制
+
+
+def test_state_prev_loop_wraps():
+    s = ViewerState(images=[Path("a"), Path("b"), Path("c")], index=0,
+                    playing=False, interval=3.0, loop=True)
+    assert s.prev() == Path("c")   # loop 首→末回卷
+
+
+def test_state_index_out_of_range_does_not_raise():
+    s = ViewerState(images=[Path("a"), Path("b")], index=99,
+                    playing=False, interval=3.0, loop=False)
+    assert s._cur() is None        # 加固 1：不抛 IndexError
+
+
+def test_read_config_missing_screen_key(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / CONFIG_FILENAME).write_text('{"foo": 1}')
+    assert read_config() is None
+
+
+def test_read_config_non_dict_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / CONFIG_FILENAME).write_text('[1, 2, 3]')
+    assert read_config() is None
+
+
+def test_read_config_non_int_screen(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / CONFIG_FILENAME).write_text('{"screen": ["a", "b"]}')
+    assert read_config() is None
+
+
+def test_read_config_screen_too_short(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / CONFIG_FILENAME).write_text('{"screen": [1920]}')
+    assert read_config() is None
+
+
+def test_read_config_non_positive_rejected(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / CONFIG_FILENAME).write_text('{"screen": [-1, 0]}')
+    assert read_config() is None
+
+
+def test_list_images_nonexistent_path(tmp_path):
+    assert list_images(tmp_path / "nope") == []
+
+
+def test_list_images_uppercase_suffix(tmp_path):
+    (tmp_path / "x.JPG").write_bytes(b"x")
+    (tmp_path / "y.PNG").write_bytes(b"x")
+    assert [p.name for p in list_images(tmp_path)] == ["x.JPG", "y.PNG"]
+
+
+def test_write_config_readonly_does_not_create_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tmp_path.chmod(0o500)
+    try:
+        write_config((1280, 720))   # best-effort，不应抛
+    finally:
+        tmp_path.chmod(0o700)
+    assert not (tmp_path / CONFIG_FILENAME).exists()   # 且不应留下文件

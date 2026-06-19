@@ -27,7 +27,9 @@ class ViewerState:
     loop: bool = False
 
     def _cur(self) -> Optional[Path]:
-        return self.images[self.index] if self.images else None
+        if 0 <= self.index < len(self.images):
+            return self.images[self.index]
+        return None
 
     def first(self) -> Optional[Path]:
         self.index = 0
@@ -88,6 +90,8 @@ def read_config(path: str = CONFIG_FILENAME) -> Optional[Tuple[int, int]]:
         raw = Path(path).read_text(encoding="utf-8")
         data = json.loads(raw)
         w, h = int(data["screen"][0]), int(data["screen"][1])
+        if w <= 0 or h <= 0:
+            return None
         return (w, h)
     except (OSError, ValueError, KeyError, TypeError, IndexError):
         return None
