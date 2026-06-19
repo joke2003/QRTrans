@@ -15,7 +15,8 @@ def main(argv=None):
                    help="关闭角标")
     args = p.parse_args(argv)
     if not args.target.exists():
-        print(f"error: not found: {args.target}", file=sys.stderr)
+        from .gui import report_error   # 错误路径才 import（tkinter 在 frozen viewer 里可用）
+        report_error(f"not found: {args.target}")
         return 2
     # 延迟 import：仅在真正启动时才加载 Tk
     from .gui import run

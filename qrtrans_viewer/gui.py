@@ -5,6 +5,25 @@ from PIL import Image, ImageTk
 from .core import ViewerState, list_images, write_config
 
 
+def report_error(msg: str) -> None:
+    """Windowed 安全的错误上报：优先 Tk 弹窗（windowed 下 stderr=None），退回 print，绝不抛。"""
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        r = tk.Tk()
+        r.withdraw()
+        messagebox.showerror("qrtrans-viewer", msg)
+        r.destroy()
+        return
+    except Exception:
+        pass
+    try:
+        if sys.stderr is not None:
+            print(f"error: {msg}", file=sys.stderr)
+    except Exception:
+        pass
+
+
 def _enable_dpi_awareness():
     try:
         import ctypes
@@ -22,7 +41,7 @@ def run(target: Path, interval: float, loop: bool, overlay: bool) -> int:
 
     images = list_images(target)
     if not images:
-        print("error: no images found", file=sys.stderr)
+        report_error(f"no images found in {target}")
         return 2
 
     _enable_dpi_awareness()
