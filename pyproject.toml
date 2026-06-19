@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qrtrans"
-version = "0.3.0"
+version = "0.3.1"
 description = "Encode text files/directories into QR codes (with array packing) and decode them back."
 requires-python = ">=3.8"
 dependencies = [
