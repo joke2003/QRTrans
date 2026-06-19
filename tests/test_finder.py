@@ -59,3 +59,17 @@ def test_locate_survives_scales(scale):
     scaled = img.resize((int(400 * scale), int(300 * scale)), Image.BILINEAR)
     corners = locate_markers(scaled)
     assert corners is not None and len(corners) == 4
+
+
+def test_locate_precision_large_image():
+    # 回归：2560 宽图下 step=min(W,H)//200=7，粗采样质心曾偏移 >2px
+    # （marker 12px、采样 {0,7}→质心 3，真中心 5.5），是 cm 大屏解码失败的根因。
+    W, H = 2560, 1440
+    img = Image.new("RGB", (W, H), "white")
+    draw_markers(img, cell_px=4)
+    tl, tr, bl, br = locate_markers(img)
+    half = (MARKER_CELL * 4) // 2  # 6；marker 真中心 ≈ half 与 W-1-half
+    assert abs(tl[0] - half) <= 1 and abs(tl[1] - half) <= 1
+    assert abs(tr[0] - (W - 1 - half)) <= 1 and abs(tr[1] - half) <= 1
+    assert abs(bl[0] - half) <= 1 and abs(bl[1] - (H - 1 - half)) <= 1
+    assert abs(br[0] - (W - 1 - half)) <= 1 and abs(br[1] - (H - 1 - half)) <= 1

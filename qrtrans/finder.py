@@ -8,6 +8,8 @@ from PIL import Image, ImageDraw
 MARKER_COLOR = (32, 223, 96)
 MARKER_TOL = 24
 MARKER_CELL = 3  # 标记边长（单元格数）
+# 最大 marker 边长（像素）= MARKER_CELL × 最大合法 cell_px(12)；用于精修窗口半径。
+_MAX_MARKER_PX = MARKER_CELL * 12
 
 
 def _marker_size_px(cell_px: int) -> int:
@@ -30,9 +32,39 @@ def draw_markers(canvas: Image.Image, cell_px: int) -> None:
         d.rectangle([x0, y0, x0 + s - 1, y0 + s - 1], fill=MARKER_COLOR)
 
 
+def _refine_marker_center(px, approx_x: int, approx_y: int, W: int, H: int):
+    """在粗质心附近全分辨率扫描，取 marker 像素外接矩形中心。
+
+    粗采样质心会随采样步长(step=min(W,H)//200)与 marker 对齐情况偏移：
+    如 2560 宽图 step=7、marker 12px，采样到 {0,7} → 质心 3（真中心 5.5），
+    使 interior_box 起点偏移 ~3px，采样错过单元中心、header 字节错乱。
+    marker 是实心方块，外接矩形中心 = 真中心，与步长/分辨率无关。
+    """
+    half = _MAX_MARKER_PX
+    x_lo, x_hi = max(0, approx_x - half), min(W - 1, approx_x + half)
+    y_lo, y_hi = max(0, approx_y - half), min(H - 1, approx_y + half)
+    xmin = ymin = None
+    xmax = ymax = None
+    for y in range(y_lo, y_hi + 1):
+        for x in range(x_lo, x_hi + 1):
+            if _is_marker_rgb(px[x, y]):
+                if xmin is None or x < xmin:
+                    xmin = x
+                if xmax is None or x > xmax:
+                    xmax = x
+                if ymin is None or y < ymin:
+                    ymin = y
+                if ymax is None or y > ymax:
+                    ymax = y
+    if xmin is None:
+        return (approx_x, approx_y)
+    return ((xmin + xmax) // 2, (ymin + ymax) // 2)
+
+
 def locate_markers(image: Image.Image) -> Optional[List[Tuple[int, int]]]:
-    """全图稀疏扫描找 MARKER_COLOR 像素，按 4 象限分组取质心。
-    返回 [TL, TR, BL, BR]；任一象限无标记则返回 None。"""
+    """全图稀疏扫描找 MARKER_COLOR 像素，按 4 象限分组取质心，再局部精修。
+
+    返回 [TL, TR, BL, BR]（marker 中心）；任一象限无标记则返回 None。"""
     W, H = image.size
     px = image.load()
     quads = {"TL": [], "TR": [], "BL": [], "BR": []}
@@ -50,7 +82,7 @@ def locate_markers(image: Image.Image) -> Optional[List[Tuple[int, int]]]:
             return None
         cx = sum(p[0] for p in pts) // len(pts)
         cy = sum(p[1] for p in pts) // len(pts)
-        centers.append((cx, cy))
+        centers.append(_refine_marker_center(px, cx, cy, W, H))
     return centers   # [TL, TR, BL, BR]
 
 

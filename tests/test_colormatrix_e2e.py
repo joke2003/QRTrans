@@ -74,3 +74,16 @@ def test_e2e_default_params_on_full_screen(tmp_path):
     dest = tmp_path / "dec.txt"
     colormatrix_decode(out, dest)
     assert dest.read_text() == "full screen default " * 200
+
+
+def test_e2e_large_screen_2560x1440(tmp_path):
+    # 回归：宽图下 locate_markers 的粗采样质心偏移，曾导致 header 解不出、整帧被丢、
+    # colormatrix_decode 报 "no colormatrix frames found"。1920x1080 因 step 不同侥幸能过。
+    src = tmp_path / "a.txt"
+    src.write_text("big screen 2560 " * 500)
+    out = tmp_path / "o"
+    colormatrix_encode(src, out, _opts(batch="e2big2561", colors=16, cell_px=4,
+                                       screen=(2560, 1440)))
+    dest = tmp_path / "dec.txt"
+    colormatrix_decode(out, dest)
+    assert dest.read_text() == "big screen 2560 " * 500
