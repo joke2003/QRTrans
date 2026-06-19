@@ -5,6 +5,17 @@ from PIL import Image, ImageTk
 from .core import ViewerState, list_images, write_config
 
 
+def _enable_dpi_awareness():
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass  # 非 Windows 或无 API
+
+
 def run(target: Path, interval: float, loop: bool, overlay: bool) -> int:
     import tkinter as tk
     from tkinter import Label
@@ -14,10 +25,12 @@ def run(target: Path, interval: float, loop: bool, overlay: bool) -> int:
         print("error: no images found", file=sys.stderr)
         return 2
 
+    _enable_dpi_awareness()
     root = tk.Tk()
     root.update_idletasks()
     screen = (root.winfo_screenwidth(), root.winfo_screenheight())
-    write_config(screen)   # best-effort 写 ./qrtrans.json
+    if screen[0] > 100 and screen[1] > 100:
+        write_config(screen)   # best-effort 写 ./qrtrans.json
 
     state = ViewerState(images=images, index=0, playing=False,
                         interval=interval, loop=loop)
@@ -36,25 +49,54 @@ def run(target: Path, interval: float, loop: bool, overlay: bool) -> int:
     info_label = Label(root, bg="black", fg="white", anchor="sw", justify="left")
     info_label.place(x=8, rely=1.0, y=-8, anchor="sw")
 
-    cache = {"cur": None, "next": None}   # 防 GC + 预加载
+    hint_label = Label(root, bg="black", fg="#ffd24d", anchor="nw", justify="left")
+    hint_label.place(x=8, y=8, anchor="nw")
+    hint_timer = {"id": None}
+
+    cache = {"cur_index": -1, "cur": None, "next_index": -1, "next": None}
+
+    def _load(idx):
+        with Image.open(images[idx]) as im:
+            im.load()
+            return ImageTk.PhotoImage(im)
+
+    def _ensure_current():
+        # 若当前 index 已在 next 缓存里 → 提升为 cur，免重解码
+        if state.index == cache["next_index"] and cache["next"] is not None:
+            cache["cur"] = cache["next"]; cache["cur_index"] = cache["next_index"]
+            cache["next"] = None; cache["next_index"] = -1
+        elif state.index != cache["cur_index"] or cache["cur"] is None:
+            try:
+                cache["cur"] = _load(state.index); cache["cur_index"] = state.index
+            except Exception:
+                pass  # 坏图保留旧
+        # 预加载下一张
+        ni = state.index + 1
+        if 0 <= ni < len(images) and ni != cache["next_index"]:
+            try:
+                cache["next"] = _load(ni); cache["next_index"] = ni
+            except Exception:
+                cache["next"] = None; cache["next_index"] = -1
 
     def _render():
-        cur = images[state.index]
-        im = Image.open(cur); im.load()
-        cache["cur"] = ImageTk.PhotoImage(im)
+        _ensure_current()
         img_label.configure(image=cache["cur"])
-        if state.index + 1 < len(images):
-            try:
-                cache["next"] = ImageTk.PhotoImage(Image.open(images[state.index + 1]))
-            except Exception:
-                cache["next"] = None
         if overlay_on[0]:
             mark = "▶" if state.playing else "⏸"
-            info_label.configure(text=f"{cur.name} · {state.index+1}/{len(images)} · "
+            info_label.configure(text=f"{images[state.index].name} · {state.index+1}/{len(images)} · "
                                       f"{state.interval:.1f}s · {mark}")
             info_label.lift()
         else:
             info_label.configure(text="")
+
+    def _show_hint():
+        w, h = screen
+        hint_label.configure(text=f"本机分辨率 {w}x{h}\n编码请用 --screen {w}x{h} 匹配以 1:1 铺满")
+        hint_label.lift()
+        def _clear():
+            hint_label.configure(text="")
+            hint_timer["id"] = None
+        hint_timer["id"] = root.after(3000, _clear)
 
     timer = {"id": None}
 
@@ -89,6 +131,11 @@ def run(target: Path, interval: float, loop: bool, overlay: bool) -> int:
         overlay_on[0] = not overlay_on[0]; _render()
 
     def _quit():
+        if hint_timer["id"] is not None:
+            try:
+                root.after_cancel(hint_timer["id"])
+            except Exception:
+                pass
         root.destroy()
 
     root.bind("<Right>", lambda e: _next())
@@ -108,5 +155,6 @@ def run(target: Path, interval: float, loop: bool, overlay: bool) -> int:
     root.bind("Q", lambda e: _quit())
 
     _render()
+    _show_hint()
     root.mainloop()
     return 0
