@@ -58,8 +58,17 @@ def test_decode_missing_chunk_warns_and_recovers_others(tmp_path):
     (root / "b.txt").write_text("B", encoding="utf-8")
     out = tmp_path / "out"
     encode(root, out, _opts(mode="single"))   # 单 QR/文件便于删一块
-    pngs = sorted(out.glob("*.png"))
-    pngs[0].unlink()  # 删掉第一块
+    # 帧序取决于 os.walk 的 readdir 顺序（Windows 近字母序、Linux 按 hash），
+    # 不能按位置删；扫描定位「多块文件」的某一帧删除。
+    from PIL import Image
+    from qrtrans.qr_scan import scan
+    target = next(
+        (p for p in sorted(out.glob("*.png"))
+         if any(pl.tc > 1 for pl in scan(Image.open(p)))),
+        None,
+    )
+    assert target is not None, "未找到多块文件的帧"
+    target.unlink()  # 删掉 a.txt 的一块
     dest = tmp_path / "decoded"
     res = decode(out, dest, DecodeOptions(strict=False))
     assert (dest / "b.txt").read_text(encoding="utf-8") == "B"

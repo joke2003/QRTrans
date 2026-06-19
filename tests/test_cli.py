@@ -58,8 +58,17 @@ def test_cli_decode_partial_returns_nonzero(tmp_path):
     (root / "b.txt").write_text("B", encoding="utf-8")
     out = tmp_path / "out"
     _run(["encode", str(root), "-o", str(out), "--mode", "single", "--batch", "ffffffff"])
-    pngs = sorted(out.glob("*.png"))
-    pngs[0].unlink()
+    # 帧序取决于 os.walk 的 readdir 顺序（Windows 近字母序、Linux 按 hash），
+    # 不能按位置删；扫描定位「多块文件」的某一帧删除。
+    from PIL import Image
+    from qrtrans.qr_scan import scan
+    target = next(
+        (p for p in sorted(out.glob("*.png"))
+         if any(pl.tc > 1 for pl in scan(Image.open(p)))),
+        None,
+    )
+    assert target is not None, "未找到多块文件的帧"
+    target.unlink()
     dest = tmp_path / "dec"
     r = _run(["decode", str(out), "-o", str(dest)])
     assert r.returncode == 1  # partial success
