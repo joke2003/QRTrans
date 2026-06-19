@@ -1,19 +1,13 @@
 import os
 import sys
 
-
-def _ensure_utf8_stream(stream):
-    """windowed 冻结 exe 下 stdout/stderr 可能为 None 或 cp1252 编码，
-    两者都会让含中文的 argparse --help 崩溃。统一确保 UTF-8。"""
-    if stream is None:
-        return open(os.devnull, "w", encoding="utf-8", errors="replace")
-    if hasattr(stream, "reconfigure"):
-        stream.reconfigure(encoding="utf-8", errors="replace")
-    return stream
-
-
-sys.stdout = _ensure_utf8_stream(sys.stdout)
-sys.stderr = _ensure_utf8_stream(sys.stderr)
+# entry_viewer.py 仅作 PyInstaller frozen 入口（windowed, console=False）。
+# windowed 下 stdout/stderr 可能是 None 或 cp1252 编码的未知类型，
+# 含中文的 argparse --help / print 都会崩。
+# 无条件替换为 UTF-8 devnull（windowed 下输出本就不可见，这纯粹是防崩）。
+# 开发模式（python -m qrtrans_viewer）不走此文件，不受影响。
+sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
 
 from qrtrans_viewer.__main__ import main
 
