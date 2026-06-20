@@ -93,6 +93,8 @@ def _build_parser() -> argparse.ArgumentParser:
     enc.add_argument("--cell-px", type=int, default=4)
     enc.add_argument("--cm-ecc", type=int, default=12,
                      help="colormatrix Reed-Solomon 冗余百分比（推荐 8–20）")
+    enc.add_argument("--margin", type=int, default=24, metavar="PX",
+                     help="colormatrix 四边黑色留白像素（默认 24，给截图标注/屏幕边框留边）；0=不留白")
     cmcomp = enc.add_mutually_exclusive_group()
     cmcomp.add_argument("--compress", dest="compress", action="store_true", default=True)
     cmcomp.add_argument("--no-compress", dest="compress", action="store_false")
@@ -131,7 +133,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 from .cm_encoder import colormatrix_encode, CmEncodeOptions
                 opts = CmEncodeOptions(colors=args.colors, cell_px=args.cell_px,
                                        ecc_percent=args.cm_ecc, compress=args.compress,
-                                       screen=screen, batch=args.batch, label=args.label)
+                                       screen=screen, batch=args.batch, label=args.label,
+                                       margin=args.margin)
                 res = colormatrix_encode(args.input, args.outdir, opts, progress=pp)
                 print(f"encoded batch={res.batch} frames={res.frame_count} -> {args.outdir}")
             else:

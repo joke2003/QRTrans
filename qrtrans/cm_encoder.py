@@ -15,6 +15,8 @@ from .cm_protocol import nsym as _nsym
 from .finder import draw_markers, MARKER_CELL
 from .progress import ProgressCallback, ProgressEvent
 
+LABEL_HEIGHT = 40   # label 横幅高度（像素），位于 grid 正下方
+
 
 def _payload_bytes_per_frame(payload_cells: int, bpc: int, nsym_val: int) -> int:
     """每帧 RS 编码前的原始数据字节数。
@@ -39,6 +41,7 @@ class CmEncodeOptions:
     screen: Tuple[int, int] = (1920, 1080)
     batch: str = ""
     label: bool = True
+    margin: int = 24   # 四边黑色留白（像素）；让帧==屏幕且给截图标注留边
 
 
 @dataclass
@@ -65,9 +68,16 @@ def _normalize_batch(batch: str) -> str:
     return _new_batch()
 
 
-def _grid_dims(screen, cell_px):
+def _grid_dims(screen, cell_px, margin, label):
+    """grid 单元数：在屏幕内扣四边留白和 label 高度后的可用区按 cell_px 整除。
+
+    这样 grid + 留白 + label 总尺寸 <= screen，帧画布取 screen 大小、
+    其余填黑，杜绝 viewer 全屏时的裁切。
+    """
     sw, sh = screen
-    return sw // cell_px, sh // cell_px
+    avail_w = sw - 2 * margin
+    avail_h = sh - 2 * margin - (LABEL_HEIGHT if label else 0)
+    return avail_w // cell_px, avail_h // cell_px
 
 
 def colormatrix_encode(input_path: Path, out_dir: Path,
@@ -97,7 +107,7 @@ def colormatrix_encode(input_path: Path, out_dir: Path,
     else:
         compressed = 0
 
-    gw, gh = _grid_dims(options.screen, cell_px)
+    gw, gh = _grid_dims(options.screen, cell_px, options.margin, options.label)
     iw = gw - 2 * MARKER_CELL
     ih = gh - 2 * MARKER_CELL
     header_cells = cm_protocol.header_cells(bpc)
@@ -124,7 +134,8 @@ def colormatrix_encode(input_path: Path, out_dir: Path,
             compressed=compressed, payload_len=frame_orig_len, payload_sha256=sha,
         )
         img = _render_frame(header, frame_payload, palette, bpc, cell_px, gw, gh,
-                            options.label, batch, idx, frame_total)
+                            options.label, batch, idx, frame_total,
+                            options.screen, options.margin)
         p = out_dir / f"qrtrans_{batch}_cm_{idx:03d}.png"
         img.save(p, "PNG")
         outputs.append(p)
@@ -163,13 +174,13 @@ def _chunk_with_rs(payload: bytes, bytes_per_frame: int, nsym: int):
 
 
 def _render_frame(header, frame_payload, palette, bpc, cell_px, gw, gh,
-                  label, batch, idx, total) -> Image.Image:
+                  label, batch, idx, total, screen, margin) -> Image.Image:
+    sw, sh = screen
     grid_w_px = gw * cell_px
     grid_h_px = gh * cell_px
-    H = grid_h_px + (40 if label else 0)
 
     # 先在「网格区」大小的临时图上绘制内部单元格 + finder 标记，
-    # 再 paste 到 canvas 顶部网格区。label 区单独绘制，确保标记不落入 label 区。
+    # 再 paste 到屏幕画布的 (margin, margin) 处。画布整屏黑底，杜绝 viewer 裁切。
     grid_img = Image.new("RGB", (grid_w_px, grid_h_px), "white")
 
     header_bytes = cm_protocol.header_to_bytes(header)
@@ -192,11 +203,11 @@ def _render_frame(header, frame_payload, palette, bpc, cell_px, gw, gh,
     # 标记画在网格区 4 角，用 finder.draw_markers 的离网格色 MARKER_COLOR
     draw_markers(grid_img, cell_px)
 
-    canvas = Image.new("RGB", (grid_w_px, H), "white")
-    canvas.paste(grid_img, (0, 0))
+    canvas = Image.new("RGB", (sw, sh), "black")
+    canvas.paste(grid_img, (margin, margin))
 
     if label:
         dl = ImageDraw.Draw(canvas)
-        dl.rectangle([0, grid_h_px, grid_w_px, H], fill="black")
-        dl.text((10, grid_h_px + 10), f"batch={batch} cm {idx}/{total}", fill="white")
+        ly = margin + grid_h_px
+        dl.text((margin + 10, ly + 10), f"batch={batch} cm {idx}/{total}", fill="white")
     return canvas

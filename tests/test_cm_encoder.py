@@ -6,7 +6,7 @@ from qrtrans.cm_decoder import is_colormatrix_frame
 
 def _opts(**over):
     base = dict(colors=16, cell_px=8, ecc_percent=12, compress=True,
-                screen=(640, 480), batch="", label=False)
+                screen=(640, 480), batch="", label=False, margin=0)
     base.update(over)
     return CmEncodeOptions(**base)
 
@@ -82,3 +82,54 @@ def test_encode_random_bytes_not_compressed(tmp_path):
         assert info is not None
         header = info[0]
         assert header.compressed == 0
+
+
+def test_frame_fits_screen_with_label_and_margin(tmp_path):
+    # label+margin 默认下，帧总尺寸必须 == screen，否则 viewer 全屏会裁掉顶部 marker
+    src = tmp_path / "a.txt"; src.write_text("frame size test " * 50)
+    out = tmp_path / "o"
+    colormatrix_encode(src, out, _opts(batch="fs000001", label=True, margin=24,
+                                       screen=(1920, 1080)))
+    p = sorted(out.glob("*.png"))[0]
+    with Image.open(p) as im:
+        assert im.size == (1920, 1080)
+
+
+def test_markers_inside_frame_with_margin(tmp_path):
+    # 四角 marker 必须在画面内、且距屏边 >= margin（不被裁切、被留白内缩）
+    from qrtrans.finder import locate_markers
+    src = tmp_path / "a.txt"; src.write_text("marker inset " * 50)
+    out = tmp_path / "o"
+    margin = 24
+    W, H = 1920, 1080
+    colormatrix_encode(src, out, _opts(batch="mk000001", label=True, margin=margin,
+                                       screen=(W, H)))
+    p = sorted(out.glob("*.png"))[0]
+    with Image.open(p) as img:
+        img.load()
+        corners = locate_markers(img)
+    assert corners is not None and len(corners) == 4
+    for (cx, cy) in corners:
+        assert margin <= cx <= W - 1 - margin, f"x={cx} 越界留白区"
+        assert margin <= cy <= H - 1 - margin, f"y={cy} 越界留白区"
+
+
+def test_margin0_label_false_fills_screen(tmp_path):
+    # margin=0 + label=False：完全恢复旧行为（grid 全填 screen）
+    src = tmp_path / "a.txt"; src.write_text("legacy fill " * 50)
+    out = tmp_path / "o"
+    colormatrix_encode(src, out, _opts(batch="lg000001", label=False, margin=0,
+                                       screen=(640, 480)))
+    p = sorted(out.glob("*.png"))[0]
+    with Image.open(p) as im:
+        assert im.size == (640, 480)
+
+
+def test_margin_too_large_raises(tmp_path):
+    # 留白过大 -> grid 过小 -> 现有 "too small" 报错路径
+    import pytest
+    src = tmp_path / "a.txt"; src.write_text("x")
+    out = tmp_path / "o"
+    with pytest.raises(ValueError):
+        colormatrix_encode(src, out, _opts(batch="big00001", margin=300,
+                                           screen=(640, 480)))
