@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from PIL import Image, ImageDraw
 from qrtrans.finder import draw_markers, locate_markers, interior_box, MARKER_COLOR, MARKER_CELL
 
@@ -73,3 +74,42 @@ def test_locate_precision_large_image():
     assert abs(tr[0] - (W - 1 - half)) <= 1 and abs(tr[1] - half) <= 1
     assert abs(bl[0] - half) <= 1 and abs(bl[1] - (H - 1 - half)) <= 1
     assert abs(br[0] - (W - 1 - half)) <= 1 and abs(br[1] - (H - 1 - half)) <= 1
+
+
+def test_locate_resists_interior_false_positives_real_frame():
+    # 回归（真实帧）：内部接近 marker 绿的单元曾把象限质心拉偏，顶左/顶右 marker
+    # 被认成内部假阳性 → header 解不出 → 该帧被误判为"缺失帧 [5]"。
+    # 真 marker 是密集实心块（~150-210px），假阳性是稀疏散点；取密度最高者。
+    img = Image.open(Path(__file__).parent / "fixtures" / "cm_locate_false_positive.png").convert("RGB")
+    W, H = img.size
+    corners = locate_markers(img)
+    assert corners is not None and len(corners) == 4
+    tl, tr, bl, br = corners
+    # 真 marker 在四角、构成规整矩形；假阳性会让顶边歪斜（旧代码 TL.y=80 TR.y=50）
+    assert abs(tl[1] - tr[1]) <= 3, f"顶边歪斜: TL.y={tl[1]} TR.y={tr[1]}"
+    assert abs(bl[1] - br[1]) <= 3
+    assert tl[0] < W * 0.1 and tl[1] < H * 0.1
+    assert tr[0] > W * 0.9 and tr[1] < H * 0.1
+    # 整帧必须能解出（最终目标）
+    from qrtrans.cm_decoder import _decode_one_frame
+    assert _decode_one_frame(img) is not None, "fixture 帧应能完整解出"
+
+
+def test_locate_picks_dense_corner_over_interior_scatter():
+    # 合成：象限内撒大量散点假阳性绿（模拟缩放/捕获产生的内部绿点），
+    # locate_markers 应选密集实心的真 marker（四角），而非被散点质心拉偏。
+    import random
+    W, H = 1600, 1200
+    img = Image.new("RGB", (W, H), "white")
+    draw_markers(img, cell_px=4)   # 四角 12px 实心 marker（中心 ~6,6 等）
+    d = ImageDraw.Draw(img)
+    random.seed(0)
+    for _ in range(250):   # TL 象限内部散点假阳性（2x2 小块，密集度远低于实心 marker）
+        x = random.randint(200, W // 2 - 20)
+        y = random.randint(200, H // 2 - 20)
+        d.rectangle([x, y, x + 1, y + 1], fill=MARKER_COLOR)
+    tl, tr, bl, br = locate_markers(img)
+    assert tl[0] < 40 and tl[1] < 40, f"TL={tl} 被散点拉偏（真 marker 应在 ~6,6）"
+    assert tr[0] > W - 40 and tr[1] < 40
+    assert bl[0] < 40 and bl[1] > H - 40
+    assert br[0] > W - 40 and br[1] > H - 40

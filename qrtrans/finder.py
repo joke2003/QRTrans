@@ -33,21 +33,21 @@ def draw_markers(canvas: Image.Image, cell_px: int) -> None:
 
 
 def _refine_marker_center(px, approx_x: int, approx_y: int, W: int, H: int):
-    """在粗质心附近全分辨率扫描，取 marker 像素外接矩形中心。
+    """在粗质心附近全分辨率扫描，返回 (marker 外接矩形中心, 窗口内绿色像素数)。
 
-    粗采样质心会随采样步长(step=min(W,H)//200)与 marker 对齐情况偏移：
-    如 2560 宽图 step=7、marker 12px，采样到 {0,7} → 质心 3（真中心 5.5），
-    使 interior_box 起点偏移 ~3px，采样错过单元中心、header 字节错乱。
     marker 是实心方块，外接矩形中心 = 真中心，与步长/分辨率无关。
+    绿色像素数用于区分真 marker（实心 ~100+px）与假阳性（稀疏散点 ~几 px）。
     """
     half = _MAX_MARKER_PX
     x_lo, x_hi = max(0, approx_x - half), min(W - 1, approx_x + half)
     y_lo, y_hi = max(0, approx_y - half), min(H - 1, approx_y + half)
     xmin = ymin = None
     xmax = ymax = None
+    count = 0
     for y in range(y_lo, y_hi + 1):
         for x in range(x_lo, x_hi + 1):
             if _is_marker_rgb(px[x, y]):
+                count += 1
                 if xmin is None or x < xmin:
                     xmin = x
                 if xmax is None or x > xmax:
@@ -57,13 +57,16 @@ def _refine_marker_center(px, approx_x: int, approx_y: int, W: int, H: int):
                 if ymax is None or y > ymax:
                     ymax = y
     if xmin is None:
-        return (approx_x, approx_y)
-    return ((xmin + xmax) // 2, (ymin + ymax) // 2)
+        return ((approx_x, approx_y), 0)
+    return (((xmin + xmax) // 2, (ymin + ymax) // 2), count)
 
 
 def locate_markers(image: Image.Image) -> Optional[List[Tuple[int, int]]]:
-    """全图稀疏扫描找 MARKER_COLOR 像素，按 4 象限分组取质心，再局部精修。
+    """全图稀疏扫描找 MARKER_COLOR 像素，按 4 象限分组，每象限取**密度最高**的实心块。
 
+    旧的「象限质心」会被内部假阳性绿点（缩放/捕获产生）拉偏，把真 marker 认到
+    内部、header 解码失败。真 marker 是实心方块（~100+ 像素），假阳性是稀疏散点，
+    按 36px 桶去重种子后逐个精修、取绿色像素数最高者即可稳定定位。
     返回 [TL, TR, BL, BR]（marker 中心）；任一象限无标记则返回 None。"""
     W, H = image.size
     px = image.load()
@@ -80,9 +83,19 @@ def locate_markers(image: Image.Image) -> Optional[List[Tuple[int, int]]]:
         pts = quads[q]
         if not pts:
             return None
-        cx = sum(p[0] for p in pts) // len(pts)
-        cy = sum(p[1] for p in pts) // len(pts)
-        centers.append(_refine_marker_center(px, cx, cy, W, H))
+        best_center = None
+        best_count = -1
+        seen_bucket = set()
+        for (sx, sy) in pts:
+            bucket = (sx // _MAX_MARKER_PX, sy // _MAX_MARKER_PX)
+            if bucket in seen_bucket:
+                continue
+            seen_bucket.add(bucket)
+            center, count = _refine_marker_center(px, sx, sy, W, H)
+            if count > best_count:
+                best_count = count
+                best_center = center
+        centers.append(best_center)
     return centers   # [TL, TR, BL, BR]
 
 
